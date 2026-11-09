@@ -1,0 +1,42 @@
+repelly
+Copyright (C) 2026 Moritz Peist
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program, in the file LICENSE. If not, see <https://www.gnu.org/licenses/>.
+
+
+CREDITS
+
+repelly brings the ideas of the following GPL-licensed R packages to Python. Its
+function names, parameters and browser-side approach are modelled on them.
+
+plotly.repel
+    Copyright (C) Santiago Cano Muniz
+    License: GPL (>= 3)
+    https://github.com/bigomics/plotly.repel
+    The approach of solving label positions in the browser, and the
+    add_text_repel / add_label_repel interface.
+
+ggrepel
+    Copyright (C) Kamil Slowikowski and the ggrepel contributors
+    License: GPL-3
+    https://github.com/slowkow/ggrepel
+    The original repelling-label concept and many of its parameters, such as
+    force, force_pull, box_padding, point_padding, max_overlaps and direction.
+
+
+THIRD-PARTY SOFTWARE
+
+repelly depends on Plotly (MIT License, https://github.com/plotly/plotly.py) at
+run time, and optionally on Dash and Kaleido (both MIT License). None of them
+are included in the repelly distribution. HTML exported with the Plotly library
+embedded includes plotly.js under its own MIT License.

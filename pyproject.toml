@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repelly"
+dynamic = ["version"]
+description = "Repelling, non-overlapping text labels for Plotly figures, solved in the browser."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [{ name = "Moritz Peist" }]
+keywords = ["plotly", "dash", "ggrepel", "labels", "annotations", "visualization"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Dash",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: JavaScript",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = ["plotly>=6.2"]
+
+[project.optional-dependencies]
+static = ["kaleido>=1.0"]
+dash = ["dash>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/m9o8/repelly"
+Repository = "https://github.com/m9o8/repelly"
+Issues = "https://github.com/m9o8/repelly/issues"
+
+[dependency-groups]
+test = ["ipython", "numpy", "pandas", "playwright", "pytest"]
+
+[tool.hatch.version]
+path = "src/repelly/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/repelly"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/repelly", "tests", "examples", "README.md", "LICENSE", "NOTICE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["browser: needs a local Chrome or Edge install"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10"
+
+[tool.pixi.pypi-dependencies]
+repelly = { path = ".", editable = true, extras = ["static", "dash"] }
+
+[tool.pixi.feature.test.dependencies]
+nodejs = ">=22"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest"
+test-js = "node --test tests/js/"
+test-all = { depends-on = ["test", "test-js"] }
+
+[tool.pixi.feature.lint.dependencies]
+pre-commit = "*"
+ruff = "*"
+
+[tool.pixi.feature.lint.tasks]
+lint = "ruff format . && ruff check --fix"
+lint-check = "ruff format --check . && ruff check ."
+hooks = "pre-commit install"
+
+[tool.pixi.feature.build.dependencies]
+uv = "*"
+twine = "*"
+
+[tool.pixi.feature.build.tasks]
+build = "rm -rf dist && uv build"
+check-dist = { cmd = "twine check --strict dist/*", depends-on = ["build"] }
+publish = { cmd = "twine upload dist/*", depends-on = ["check-dist"] }
+publish-test = { cmd = "twine upload --repository testpypi dist/*", depends-on = ["check-dist"] }
+
+# Oldest dependency versions the package claims to support.
+[tool.pixi.feature.min.dependencies]
+python = "3.10.*"
+
+[tool.pixi.feature.min.pypi-dependencies]
+plotly = "==6.2.0"
+dash = "==3.0.0"
+
+[tool.pixi.environments]
+default = { features = ["test", "lint", "build"] }
+min = { features = ["test", "min"] }
