@@ -22,6 +22,7 @@
   var DEBOUNCE = { render: 0, frame: 0, zoom: 60, resize: 120 };
   var MAX_CHAINED_RUNS = 3;
   var LINE_HEIGHT = 1.3;
+  var SCRIPT_SCALE = 0.7;
   var DEFAULT_RADIUS = 3;
   var DEDUPE_CELL = 3;
   var ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
@@ -99,20 +100,45 @@
     return root.__repellyCanvas.getContext('2d');
   }
 
-  function plainLines(text) {
-    return String(text)
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&(amp|lt|gt|quot|#39);/g, function (m) { return ENTITIES[m]; })
-      .split('\n');
+  function decodeEntities(text) {
+    return text.replace(/&(amp|lt|gt|quot|#39);/g, function (m) { return ENTITIES[m]; });
+  }
+
+  // Measures a line piece by piece, following Plotly's pseudo-HTML tags, because
+  // bold and superscript runs have different widths from the surrounding text.
+  function measureLine(ctx, line, font) {
+    var depth = { b: 0, i: 0, em: 0, sub: 0, sup: 0 };
+    var width = 0;
+    var last = 0;
+    var tag = /<(\/?)([a-z]+)\b[^>]*>/gi;
+
+    function addText(text) {
+      if (!text) return;
+      var size = depth.sub || depth.sup ? font.size * SCRIPT_SCALE : font.size;
+      ctx.font = [
+        depth.i || depth.em ? 'italic' : font.style,
+        depth.b ? 'bold' : font.weight,
+        size + 'px',
+        font.family
+      ].join(' ');
+      width += ctx.measureText(decodeEntities(text)).width;
+    }
+
+    for (var match = tag.exec(line); match; match = tag.exec(line)) {
+      addText(line.slice(last, match.index));
+      last = tag.lastIndex;
+      var name = match[2].toLowerCase();
+      if (name in depth) depth[name] = Math.max(0, depth[name] + (match[1] ? -1 : 1));
+    }
+    addText(line.slice(last));
+    return width;
   }
 
   function measure(ctx, text, font) {
-    ctx.font = font.size + 'px ' + font.family;
-    var lines = plainLines(text);
+    var lines = String(text).split(/<br\s*\/?>/i);
     var width = 0;
     lines.forEach(function (line) {
-      width = Math.max(width, ctx.measureText(line).width);
+      width = Math.max(width, measureLine(ctx, line, font));
     });
     return { width: width, height: lines.length * font.size * LINE_HEIGHT };
   }
@@ -180,9 +206,12 @@
 
   function fontFor(layer, full) {
     var font = layer.font || {};
+    var base = full.font || {};
     return {
-      size: font.size || (full.font && full.font.size) || 12,
-      family: font.family || (full.font && full.font.family) || 'sans-serif'
+      size: font.size || base.size || 12,
+      family: font.family || base.family || 'sans-serif',
+      weight: font.weight || base.weight || 'normal',
+      style: font.style || base.style || 'normal'
     };
   }
 

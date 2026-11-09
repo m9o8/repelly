@@ -403,3 +403,55 @@ def test_max_overlaps_applies_to_each_call(page, tmp_path):
     result = add_text_repel(result, xs, ys, ["d1", "d2", "d3"], max_overlaps=0)
     render(page, result, tmp_path)
     assert sorted(a["text"] for a in ours(page)) == ["k1", "k2", "k3"]
+
+
+@pytest.mark.parametrize(
+    ("template", "font"),
+    [
+        ("<b>WWWWWWWW{}</b>", {"size": 16}),
+        ("<b>WWWW</b>WWWW{}", {"size": 16}),
+        ("WWWWWWWW{}", {"size": 16, "weight": "bold"}),
+        ("<i><b>WWWWWWWW{}</b></i>", {"size": 16}),
+    ],
+    ids=["bold-tag", "partly-bold", "font-weight", "bold-italic"],
+)
+def test_styled_text_is_measured_for_real(page, tmp_path, template, font):
+    xs = [1.0 + 0.002 * i for i in range(5)]
+    ys = [1.0] * 5
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    result = add_text_repel(
+        fig,
+        xs,
+        ys,
+        [template.format(i) for i in range(5)],
+        direction="x",
+        box_padding=0,
+        avoid_points=False,
+        max_overlaps=None,
+        font=font,
+    )
+    render(page, result, tmp_path)
+    boxes = page.evaluate(BOXES)
+    assert len(boxes) == 5
+    assert overlaps(boxes) == []
+
+
+def test_multiline_and_entities_are_measured(page, tmp_path):
+    xs = [1.0 + 0.002 * i for i in range(4)]
+    names = [f"<b>first</b><br>A&amp;B WWWW{i}<sup>2</sup>" for i in range(4)]
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    result = add_text_repel(
+        fig,
+        xs,
+        [1.0] * 4,
+        names,
+        direction="y",
+        box_padding=0,
+        avoid_points=False,
+        max_overlaps=None,
+        font={"size": 14},
+    )
+    render(page, result, tmp_path)
+    boxes = page.evaluate(BOXES)
+    assert len(boxes) == 4
+    assert overlaps(boxes) == []
