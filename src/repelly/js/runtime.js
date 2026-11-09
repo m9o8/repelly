@@ -445,6 +445,8 @@
     var collected = collectLabels(gd, state, cfg);
     var annotations = [];
     var previous = {};
+    var dropped = 0;
+    var unresolved = 0;
 
     Object.keys(collected.panels).sort().forEach(function (key) {
       var panel = collected.panels[key];
@@ -463,6 +465,8 @@
       if (dropping) markUnresolved(entries, result, hidden);
 
       entries.forEach(function (entry, i) {
+        if (!result.kept[i]) dropped++;
+        else if (result.colliding[i]) unresolved++;
         if (!result.kept[i] || hidden[i]) return;
         previous[entry.id] = [result.x[i] - entry.spec.x, result.y[i] - entry.spec.y];
         annotations.push(buildAnnotation(entry, result.x[i], result.y[i], entry.spec.radius));
@@ -470,7 +474,24 @@
     });
 
     state.previous = previous;
+    state.stats = { dropped: dropped, unresolved: unresolved };
     return annotations;
+  }
+
+  // Reports labels the solver could not show or separate. Only a count higher
+  // than any already reported is logged, so zooming does not flood the console.
+  function reportStats(state) {
+    var stats = state.stats;
+    if (stats.dropped > state.reported.dropped) {
+      state.reported.dropped = stats.dropped;
+      console.warn('repelly: ' + stats.dropped + ' labels hidden for too many overlaps. ' +
+        'Consider increasing max_overlaps.');
+    }
+    if (stats.unresolved > state.reported.unresolved) {
+      state.reported.unresolved = stats.unresolved;
+      console.warn('repelly: ' + stats.unresolved + ' labels still overlap. ' +
+        'Consider increasing max_time_ms or max_iter, or showing fewer labels.');
+    }
   }
 
   // Hides labels that still collide, keeping the highest priority of each clash.
@@ -550,6 +571,7 @@
       console.error('repelly: failed to place labels', error);
       return Promise.resolve();
     }
+    reportStats(state);
 
     var sig = signature(annotations);
     var current = countOurs(gd);
@@ -607,6 +629,7 @@
       if (prev && prev.config !== parts.config) {
         state.previous = {};
         state.frame = null;
+        state.reported = { dropped: 0, unresolved: 0 };
         parts.frame = String(activeFrame(gd, state, cfg));
       }
     } else if (prev.frame !== parts.frame) {
@@ -642,7 +665,9 @@
       promise: Promise.resolve(),
       timer: null,
       chained: 0,
-      frame: null
+      frame: null,
+      stats: { dropped: 0, unresolved: 0 },
+      reported: { dropped: 0, unresolved: 0 }
     };
     gd.__repelly = state;
 
@@ -678,7 +703,11 @@
             if (gd._fullLayout[name]) ranges[name] = gd._fullLayout[name].range.slice();
           });
         }
-        return { annotations: ((gd.layout && gd.layout.annotations) || []).filter(isOurs), ranges: ranges };
+        return {
+          annotations: ((gd.layout && gd.layout.annotations) || []).filter(isOurs),
+          ranges: ranges,
+          stats: state.stats
+        };
       });
   }
 
