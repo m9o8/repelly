@@ -406,3 +406,14 @@ def test_trace_mode_callable_nudge():
 def test_invalid_nudges_and_limits(base, kwargs, error, message):
     with pytest.raises(error, match=message):
         add_text_repel(base, [1, 2], [1, 2], ["a", "b"], **kwargs)
+
+
+def test_initial_time_budget_is_stored_and_validated(base):
+    assert (
+        layer(add_text_repel(base, [1], [2], ["a"]))["solver"]["initial_max_time_ms"]
+        == 250.0
+    )
+    custom = add_text_repel(base, [1], [2], ["a"], initial_max_time_ms=90)
+    assert layer(custom)["solver"]["initial_max_time_ms"] == 90
+    with pytest.raises(ValueError, match="initial_max_time_ms"):
+        add_text_repel(base, [1], [2], ["a"], initial_max_time_ms=-1)
