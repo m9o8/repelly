@@ -386,3 +386,20 @@ def test_write_image_produces_png(chrome_path, tmp_path):
 def test_plain_figure_is_returned_by_bake_without_labels(chrome_path):
     fig = go.Figure(go.Scatter(x=[1], y=[1]))
     assert len(bake(fig).layout.annotations) == 0
+
+
+def test_max_labels_applies_to_each_call(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2, 3, 4], y=[1, 2, 3, 4], mode="markers"))
+    result = add_text_repel(fig, [1, 2], [1, 2], ["a", "b"], max_labels=1)
+    result = add_text_repel(result, [3, 4], [3, 4], ["c", "d"])
+    render(page, result, tmp_path)
+    assert sorted(a["text"] for a in ours(page)) == ["a", "c", "d"]
+
+
+def test_max_overlaps_applies_to_each_call(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    xs, ys = [1.5] * 3, [1.5] * 3
+    result = add_text_repel(fig, xs, ys, ["k1", "k2", "k3"], max_overlaps=None)
+    result = add_text_repel(result, xs, ys, ["d1", "d2", "d3"], max_overlaps=0)
+    render(page, result, tmp_path)
+    assert sorted(a["text"] for a in ours(page)) == ["k1", "k2", "k3"]
