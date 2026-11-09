@@ -211,3 +211,54 @@ test('direction can differ per label', () => {
   assert.ok(Math.abs(result.x[1] - 405) < 1e-9);
   assert.strictEqual(overlappingPairs(labels, result), 0);
 });
+
+test('a nudged label settles at its target', () => {
+  const labels = [label(400, 300, { nudgeX: 120, nudgeY: -80 })];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(Math.abs(result.x[0] - 520) < 2);
+  assert.ok(Math.abs(result.y[0] - 220) < 2);
+});
+
+test('nudged labels at one target still separate', () => {
+  const labels = Array.from({ length: 6 }, () => label(400, 300, { nudgeY: -100 }));
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.strictEqual(overlappingPairs(labels, result), 0);
+});
+
+test('a single-axis label keeps its nudge on the fixed axis', () => {
+  const labels = [label(400, 300, { direction: 'x', nudgeY: -60 }), label(402, 300, { direction: 'x', nudgeY: -60 })];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(Math.abs(result.y[0] - 240) < 1e-9);
+  assert.ok(Math.abs(result.y[1] - 240) < 1e-9);
+});
+
+test('per-label bounds confine a label inside the plot', () => {
+  const area = { x0: 600, y0: 0, x1: 800, y1: 600 };
+  const labels = [label(100, 300, { bounds: area }), label(100, 300)];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(result.x[0] - labels[0].width / 2 >= 600 - 1e-6);
+  assert.ok(result.x[1] < 600);
+});
+
+test('a warm start keeps single-axis nudged labels on target', () => {
+  const labels = [label(400, 300, { direction: 'y', nudgeX: 50, startDx: 0, startDy: -30 })];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(Math.abs(result.x[0] - 450) < 1e-9);
+});
+
+test('crowding is judged at the nudged position', () => {
+  const labels = [
+    label(400, 300, { priority: 2, maxOverlaps: 0 }),
+    label(400, 300, { priority: 1, maxOverlaps: 0, nudgeY: -200 }),
+  ];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.deepStrictEqual(Array.from(result.kept), [1, 1]);
+});
+
+test('the plot area wins over per-label bounds too small for the label', () => {
+  const edge = { x0: 800, y0: 0, x1: 800, y1: 600 };
+  const labels = [label(100, 300, { bounds: edge })];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(result.x[0] + labels[0].width / 2 <= 800 + 1e-6);
+  assert.ok(result.x[0] > 700);
+});

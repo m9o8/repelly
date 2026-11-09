@@ -216,6 +216,37 @@
     };
   }
 
+  // Converts a [low, high] data limit to page pixels within the axis. A missing
+  // side falls back to that edge of the visible axis.
+  function axisLimits(limit, axis) {
+    var start = axis._offset;
+    var end = axis._offset + axis._length;
+    if (!limit) return [start, end];
+
+    var first = axis._offset + axis.r2p(axis.range[0]);
+    var second = axis._offset + axis.r2p(axis.range[1]);
+    var ascending = axis.r2l(axis.range[0]) <= axis.r2l(axis.range[1]);
+    var low = limit[0] == null ? NaN : axis._offset + axis.d2p(limit[0]);
+    var high = limit[1] == null ? NaN : axis._offset + axis.d2p(limit[1]);
+    if (!Number.isFinite(low)) low = ascending ? first : second;
+    if (!Number.isFinite(high)) high = ascending ? second : first;
+
+    var lower = Math.max(start, Math.min(low, high));
+    var upper = Math.min(end, Math.max(low, high));
+    if (lower > upper) {
+      var edge = Math.min(end, Math.max(start, low));
+      return [edge, edge];
+    }
+    return [lower, upper];
+  }
+
+  function layerBounds(layer, xa, ya) {
+    if (!layer.xlim && !layer.ylim) return undefined;
+    var x = axisLimits(layer.xlim, xa);
+    var y = axisLimits(layer.ylim, ya);
+    return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+  }
+
   function labelColor(gd, layer, i, trace) {
     var color = at(layer.color, i);
     if (color !== TRACE_COLOR) return color || undefined;
@@ -303,6 +334,9 @@
             priority: at(layer.priority, i),
             maxOverlaps: solver.max_overlaps == null ? Infinity : solver.max_overlaps,
             direction: at(solver.direction, i),
+            nudgeX: at(layer.nudge_x, i) || 0,
+            nudgeY: -(at(layer.nudge_y, i) || 0),
+            bounds: layerBounds(layer, xa, ya),
             pull: solver.force_pull,
             push: solver.force,
             pointPadding: solver.point_padding,
