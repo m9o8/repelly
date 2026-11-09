@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,8 @@ def bake(
     if "error" in result:
         raise RuntimeError(f"repelly could not solve labels: {result['error']}")
 
+    _warn_about_labels(result.get("stats", {}))
+
     existing = list(baked.layout.annotations or ())
     baked.update_layout(annotations=[*existing, *result["annotations"]])
     for axis, axis_range in result["ranges"].items():
@@ -108,6 +111,23 @@ def bake(
     remaining = {key: value for key, value in meta.items() if key != META_KEY}
     baked.layout.meta = remaining or None
     return baked
+
+
+def _warn_about_labels(stats: dict[str, int]) -> None:
+    dropped = stats.get("dropped", 0)
+    if dropped:
+        warnings.warn(
+            f"repelly hid {dropped} labels for too many overlaps; "
+            "consider increasing max_overlaps",
+            stacklevel=3,
+        )
+    unresolved = stats.get("unresolved", 0)
+    if unresolved:
+        warnings.warn(
+            f"{unresolved} repelly labels still overlap; "
+            "consider increasing max_iter or showing fewer labels",
+            stacklevel=3,
+        )
 
 
 def find_browser(explicit: str | None = None) -> str:
