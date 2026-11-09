@@ -13,8 +13,9 @@
 //
 // Method: position-based relaxation. Each sweep applies a decaying pull towards
 // the anchor and then projects overlapping boxes apart along their axis of
-// least penetration. Labels that are still stuck afterwards get a ring search
-// around their anchor, and a final pass swaps labels whose leader lines cross.
+// least penetration, regularly swapping labels whose leader lines cross. Labels
+// that are still stuck afterwards get a ring search around their anchor, and a
+// final pass makes any remaining swaps that do not cause new overlaps.
 (function (root) {
   'use strict';
 
@@ -24,6 +25,8 @@
   var RING_COUNT = 10;
   var RING_ANGLES = 16;
   var UNTANGLE_LIMIT = 400;
+  var UNTANGLE_EVERY = 5;
+  var UNTANGLE_UNTIL = 0.7;
   var PULL_SLACK = 2;
 
   function createRandom(seed) {
@@ -310,6 +313,11 @@
         clampToBounds(active[w2]);
       }
 
+      if (iter % UNTANGLE_EVERY === UNTANGLE_EVERY - 1 && iter < maxIter * UNTANGLE_UNTIL &&
+          m <= UNTANGLE_LIMIT) {
+        hits += swapCrossingLabels();
+      }
+
       var largest = 0;
       for (var w3 = 0; w3 < m; w3++) {
         var idx = active[w3];
@@ -396,6 +404,29 @@
       var d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
       var d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
       return d1 * d2 < 0 && d3 * d4 < 0;
+    }
+
+    // During relaxation a swap may overlap neighbours, because later sweeps
+    // separate them again. The ggrepel solver resolves crossings the same way.
+    function swapCrossingLabels() {
+      var swaps = 0;
+      for (var c1 = 0; c1 < m; c1++) {
+        for (var c2 = c1 + 1; c2 < m; c2++) {
+          var i = active[c1];
+          var j = active[c2];
+          if (!moveX[i] || !moveY[i] || !moveX[j] || !moveY[j] || !segmentsCross(i, j)) continue;
+          var swapX = px[i];
+          var swapY = py[i];
+          px[i] = px[j];
+          py[i] = py[j];
+          px[j] = swapX;
+          py[j] = swapY;
+          clampToBounds(i);
+          clampToBounds(j);
+          swaps++;
+        }
+      }
+      return swaps;
     }
 
     if (m <= UNTANGLE_LIMIT) {
