@@ -786,3 +786,24 @@ def test_dense_chart_is_fully_separated_on_first_render(page, tmp_path):
     )
     render(page, result, tmp_path)
     assert overlaps(page.evaluate(BOXES)) == []
+
+
+def marker_carpet():
+    positions = [i / 25 for i in range(26)]
+    xs = [x for x in positions for _ in positions]
+    ys = [y for _ in positions for y in positions]
+    fig = go.Figure(go.Scatter(x=xs, y=ys, mode="markers", marker_size=26))
+    fig.update_layout(width=420, height=320)
+    return fig
+
+
+def test_label_on_a_data_point_is_not_called_an_overlap(page, tmp_path):
+    messages = collect_warnings(page)
+    render(page, add_text_repel(marker_carpet(), [0.5], [0.5], ["label"]), tmp_path)
+    assert [m for m in messages if "1 labels still cover a data point" in m]
+    assert not [m for m in messages if "still overlap" in m]
+
+
+def test_bake_reports_labels_on_data_points(chrome_path):
+    with pytest.warns(UserWarning, match="still cover a data point"):
+        bake(add_text_repel(marker_carpet(), [0.5], [0.5], ["label"]))

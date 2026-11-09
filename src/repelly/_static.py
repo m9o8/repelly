@@ -124,8 +124,15 @@ def _warn_about_labels(stats: dict[str, int]) -> None:
     unresolved = stats.get("unresolved", 0)
     if unresolved:
         warnings.warn(
-            f"{unresolved} repelly labels still overlap; "
+            f"{unresolved} repelly labels still overlap other labels; "
             "consider increasing max_iter or showing fewer labels",
+            stacklevel=3,
+        )
+    on_points = stats.get("onPoints", 0)
+    if on_points:
+        warnings.warn(
+            f"{on_points} repelly labels still cover a data point; "
+            "there may be no free space nearby",
             stacklevel=3,
         )
 

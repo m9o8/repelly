@@ -262,3 +262,26 @@ test('the plot area wins over per-label bounds too small for the label', () => {
   assert.ok(result.x[0] + labels[0].width / 2 <= 800 + 1e-6);
   assert.ok(result.x[0] > 700);
 });
+
+test('reports separately whether a label hits a label or a point', () => {
+  const obstacles = { x: [], y: [], r: [] };
+  for (let x = 0; x <= 800; x += 10) {
+    for (let y = 0; y <= 600; y += 10) {
+      obstacles.x.push(x);
+      obstacles.y.push(y);
+      obstacles.r.push(6);
+    }
+  }
+  const crowded = solve({ labels: [label(400, 300)], obstacles, bounds: BOUNDS, options: NO_LIMITS });
+  assert.deepStrictEqual(Array.from(crowded.overlapsPoint), [1]);
+  assert.deepStrictEqual(Array.from(crowded.overlapsLabel), [0]);
+
+  const free = solve({ labels: [label(400, 300)], bounds: BOUNDS, options: NO_LIMITS });
+  assert.deepStrictEqual(Array.from(free.overlapsPoint), [0]);
+  assert.deepStrictEqual(Array.from(free.overlapsLabel), [0]);
+
+  const tiny = { x0: 0, y0: 0, x1: 60, y1: 20 };
+  const many = [label(30, 10), label(30, 10), label(30, 10)];
+  const stacked = solve({ labels: many, bounds: tiny, options: { ...NO_LIMITS, maxIter: 20 } });
+  assert.ok(Array.from(stacked.overlapsLabel).some(Boolean));
+});
