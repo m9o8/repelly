@@ -14,7 +14,12 @@ from typing import Any
 
 import plotly.graph_objects as go
 import plotly.io as pio
-from plotly.io._base_renderers import ImageRenderer, PlotlyRenderer
+from plotly.io._base_renderers import (
+    HtmlRenderer,
+    IFrameRenderer,
+    ImageRenderer,
+    PlotlyRenderer,
+)
 
 from repelly._runtime import merge_post_script
 
@@ -164,4 +169,12 @@ def _split_renderers(renderer: str | None) -> tuple[list[str], list[str], list[s
             images.append(name)
         else:
             interactive.append(name)
+    if inline:
+        # A combination like "plotly_mimetype+notebook" offers alternatives for one
+        # output. Plotly's frontends pick one; repelly's iframe is a separate display.
+        interactive = [
+            name
+            for name in interactive
+            if not isinstance(pio.renderers[name], (HtmlRenderer, IFrameRenderer))
+        ]
     return interactive, inline, images

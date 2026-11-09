@@ -281,3 +281,14 @@ def test_runtime_version_matches_package():
         encoding="utf-8"
     )
     assert f"var VERSION = '{repelly.__version__}'" in source
+
+
+def test_combined_notebook_renderers_draw_once(base, monkeypatch):
+    monkeypatch.setattr(pio.renderers, "default", "plotly_mimetype+notebook")
+    shown = []
+    monkeypatch.setattr(pio, "show", lambda *args, **kwargs: shown.append("pio"))
+    monkeypatch.setattr(
+        "IPython.display.display", lambda *args, **kwargs: shown.append("iframe")
+    )
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert shown == ["iframe"]
