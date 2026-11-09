@@ -455,6 +455,7 @@
     var previous = {};
     var dropped = 0;
     var unresolved = 0;
+    var onPoints = 0;
 
     Object.keys(collected.panels).sort().forEach(function (key) {
       var panel = collected.panels[key];
@@ -474,7 +475,8 @@
 
       entries.forEach(function (entry, i) {
         if (!result.kept[i]) dropped++;
-        else if (result.colliding[i]) unresolved++;
+        else if (result.overlapsLabel[i]) unresolved++;
+        else if (result.overlapsPoint[i]) onPoints++;
         if (!result.kept[i] || hidden[i]) return;
         previous[entry.id] = [result.x[i] - entry.spec.x, result.y[i] - entry.spec.y];
         annotations.push(buildAnnotation(entry, result.x[i], result.y[i], entry.spec.radius));
@@ -482,7 +484,7 @@
     });
 
     state.previous = previous;
-    state.stats = { dropped: dropped, unresolved: unresolved };
+    state.stats = { dropped: dropped, unresolved: unresolved, onPoints: onPoints };
     return annotations;
   }
 
@@ -497,8 +499,13 @@
     }
     if (stats.unresolved > state.reported.unresolved) {
       state.reported.unresolved = stats.unresolved;
-      console.warn('repelly: ' + stats.unresolved + ' labels still overlap. ' +
+      console.warn('repelly: ' + stats.unresolved + ' labels still overlap other labels. ' +
         'Consider increasing max_time_ms or max_iter, or showing fewer labels.');
+    }
+    if (stats.onPoints > state.reported.onPoints) {
+      state.reported.onPoints = stats.onPoints;
+      console.warn('repelly: ' + stats.onPoints + ' labels still cover a data point. ' +
+        'There may be no free space nearby; consider showing fewer labels.');
     }
   }
 
@@ -638,7 +645,7 @@
       if (prev && prev.config !== parts.config) {
         state.previous = {};
         state.frame = null;
-        state.reported = { dropped: 0, unresolved: 0 };
+        state.reported = { dropped: 0, unresolved: 0, onPoints: 0 };
         parts.frame = String(activeFrame(gd, state, cfg));
       }
     } else if (prev.frame !== parts.frame) {
@@ -676,8 +683,8 @@
       chained: 0,
       frame: null,
       trigger: 'render',
-      stats: { dropped: 0, unresolved: 0 },
-      reported: { dropped: 0, unresolved: 0 }
+      stats: { dropped: 0, unresolved: 0, onPoints: 0 },
+      reported: { dropped: 0, unresolved: 0, onPoints: 0 }
     };
     gd.__repelly = state;
 

@@ -158,8 +158,8 @@ fixed, if you need one to pass elsewhere.
 
 ## Diagnostics
 
-Labels that are hidden by `max_overlaps`, or that still overlap after solving, are
-reported with a warning in the browser console. `bake`, `to_image` and `write_image`
+Labels that are hidden by `max_overlaps`, or that still overlap another label or cover a
+data point after solving, are reported with a warning in the browser console. `bake`, `to_image` and `write_image`
 raise the same information as a Python warning.
 
 ## Limitations
