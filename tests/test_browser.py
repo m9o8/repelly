@@ -455,3 +455,56 @@ def test_multiline_and_entities_are_measured(page, tmp_path):
     boxes = page.evaluate(BOXES)
     assert len(boxes) == 4
     assert overlaps(boxes) == []
+
+
+def test_color_per_label_reaches_the_page(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    result = add_text_repel(
+        fig,
+        [1, 2],
+        [1, 2],
+        ["a", "b"],
+        color=["rgb(255, 0, 0)", "rgb(0, 0, 255)"],
+        font={"size": 15},
+    )
+    render(page, result, tmp_path)
+    fills = page.evaluate("""() => Object.fromEntries(
+      Array.from(document.querySelectorAll('.annotation-text')).map(
+        el => [el.textContent, el.style.fill]))""")
+    assert fills == {"a": "rgb(255, 0, 0)", "b": "rgb(0, 0, 255)"}
+    assert {a["font"]["size"] for a in ours(page)} == {15}
+
+
+def test_color_trace_matches_px_group_colors(page, tmp_path):
+    frame = pd.DataFrame(
+        {"x": [1, 2, 3, 4], "y": [1, 2, 3, 4], "g": list("aabb"), "n": list("pqrs")}
+    )
+    fig = px.scatter(frame, x="x", y="y", color="g", text="n")
+    fig.update_traces(mode="markers")
+    render(page, add_text_repel(fig, color="trace"), tmp_path)
+    colors = {a["text"]: a["font"]["color"] for a in ours(page)}
+    assert colors["p"] == colors["q"] != colors["r"] == colors["s"]
+
+
+def test_color_trace_uses_default_colorway(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], text=["a", "b"], mode="markers"))
+    render(page, add_text_repel(fig, color="trace"), tmp_path)
+    expected = page.evaluate(f"() => {GD}._fullData[0].marker.color")
+    assert {a["font"]["color"] for a in ours(page)} == {expected}
+
+
+def test_direction_per_label_constrains_each_label(page, tmp_path):
+    xs = [1.0, 1.001, 1.002, 1.003]
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    result = add_text_repel(
+        fig,
+        xs,
+        [1.0] * 4,
+        list("abcd"),
+        direction=["x", "y", "x", "y"],
+        max_overlaps=None,
+    )
+    render(page, result, tmp_path)
+    moved = {a["text"]: (a["ax"], a["ay"]) for a in ours(page)}
+    assert moved["a"][1] == 0 and moved["c"][1] == 0
+    assert moved["b"][0] == 0 and moved["d"][0] == 0

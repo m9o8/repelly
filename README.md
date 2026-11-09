@@ -141,7 +141,8 @@ fixed, if you need one to pass elsewhere.
 | `force` | `1.0` | Separation strength, effective range 0.05 to 1 |
 | `force_pull` | `1.0` | Pull back towards the anchor |
 | `box_padding`, `point_padding` | `2`, `2` | Gaps in pixels |
-| `direction` | `"both"` | Restrict movement to `"x"` or `"y"` |
+| `direction` | `"both"` | Restrict movement to `"x"` or `"y"`; one value or one per label |
+| `color` | font colour | Text colour; one value, one per label, or `"trace"` to match each point when labelling traces |
 | `max_overlaps` | `10` | Drop a label starting on more than this many higher-priority labels; `None` keeps all |
 | `max_labels` | none | Maximum labels per subplot from this call, by priority |
 | `max_iter`, `max_time_ms` | `400`, `40` | Solver limits for one solve |

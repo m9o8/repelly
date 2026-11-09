@@ -25,6 +25,8 @@ META_KEY = "repelly"
 SCHEMA_VERSION = 1
 EVENTS = ("render", "zoom", "resize", "frame")
 SUPPORTED_TRACES = ("scatter", "scattergl")
+DIRECTIONS = ("both", "x", "y")
+TRACE_COLOR = "trace"
 
 _DEFAULT_SEGMENT = {"color": "rgba(90,90,90,0.7)", "width": 1}
 _DEFAULT_LABEL = {
@@ -54,7 +56,8 @@ def add_text_repel(
     force_pull: float = 1.0,
     box_padding: float = 2.0,
     point_padding: float = 2.0,
-    direction: str = "both",
+    direction: Any = "both",
+    color: Any = None,
     max_iter: int = 400,
     max_time_ms: float = 40.0,
     max_overlaps: int | None = 10,
@@ -111,7 +114,13 @@ def add_text_repel(
     box_padding, point_padding:
         Gaps in pixels around each label box and around each point.
     direction:
-        Axes labels may move along: ``"both"``, ``"x"`` or ``"y"``.
+        Axes labels may move along: ``"both"``, ``"x"`` or ``"y"``. One value, a
+        sequence with one per label, or in from-traces mode a function of the
+        trace.
+    color:
+        Text colour, overriding ``font["color"]``. One colour, a sequence with
+        one per label, or in from-traces mode a function of the trace. In
+        from-traces mode, ``"trace"`` uses each point's marker colour.
     max_iter, max_time_ms:
         Iteration and time limits for one solve. Calls sharing a subplot are
         solved together, using the largest limits among them.
@@ -157,6 +166,7 @@ def add_text_repel(
         box_padding=box_padding,
         point_padding=point_padding,
         direction=direction,
+        color=color,
         max_iter=max_iter,
         max_time_ms=max_time_ms,
         max_overlaps=max_overlaps,
@@ -208,6 +218,8 @@ def _add_layer(
     frame: Any = None,
     priority: Any = None,
     visible: Any = None,
+    direction: Any = "both",
+    color: Any = None,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
     on: str | Iterable[str] = EVENTS,
@@ -228,7 +240,7 @@ def _add_layer(
         if xref is not None or yref is not None or secondary_y is not None:
             raise ValueError("xref, yref and secondary_y need explicit x and y")
         columns = _columns_from_traces(
-            result, text, priority, visible, selector, row, col
+            result, text, priority, visible, direction, color, selector, row, col
         )
     else:
         if selector is not None:
@@ -236,7 +248,9 @@ def _add_layer(
         if text is None:
             raise ValueError("text is required when x and y are given")
         refs = _resolve_refs(result, row, col, secondary_y, xref, yref)
-        columns = _columns_from_arrays(x, y, text, refs, frame, priority, visible)
+        columns = _columns_from_arrays(
+            x, y, text, refs, frame, priority, visible, direction, color
+        )
 
     layer = _build_layer(_drop_unlabelled(columns), label, font, segment, solver)
     _store_layer(result, layer, events)
@@ -257,7 +271,6 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         "force_pull": 1.0,
         "box_padding": 2.0,
         "point_padding": 2.0,
-        "direction": "both",
         "max_iter": 400,
         "max_time_ms": 40.0,
         "max_overlaps": 10,
@@ -272,8 +285,6 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         raise TypeError(f"unexpected keyword arguments: {sorted(unknown)}")
     merged = {**known, **solver}
 
-    if merged["direction"] not in ("both", "x", "y"):
-        raise ValueError("direction must be 'both', 'x' or 'y'")
     for name in (
         "force",
         "force_pull",
@@ -399,6 +410,20 @@ def _visible_value(value: Any) -> bool:
     return bool(native) if native is not None else False
 
 
+def _direction_value(value: Any) -> str:
+    native = _to_native(value)
+    if native not in DIRECTIONS:
+        raise ValueError(f"direction must be 'both', 'x' or 'y', got {value!r}")
+    return native
+
+
+def _color_value(value: Any) -> str | None:
+    native = _to_native(value)
+    if native is not None and not isinstance(native, str):
+        raise ValueError(f"color values must be strings, got {value!r}")
+    return native
+
+
 def _columns_from_arrays(
     x: Any,
     y: Any,
@@ -407,6 +432,8 @@ def _columns_from_arrays(
     frame: Any,
     priority: Any,
     visible: Any,
+    direction: Any,
+    color: Any,
 ) -> dict[str, list[Any]]:
     xs = [_to_native(v) for v in _to_list(x, "x")]
     n = len(xs)
@@ -426,6 +453,20 @@ def _columns_from_arrays(
         "priority": [0.0] * n,
         "visible": [True] * n,
     }
+    if isinstance(direction, str):
+        columns["direction"] = [_direction_value(direction)] * n
+    else:
+        directions = [_direction_value(v) for v in _to_list(direction, "direction")]
+        _check_length(directions, "direction", n)
+        columns["direction"] = directions
+    if isinstance(color, str) and color == TRACE_COLOR:
+        raise ValueError("color='trace' needs labels made from traces, without x and y")
+    if color is None or isinstance(color, str):
+        columns["color"] = [color] * n
+    else:
+        colors = [_color_value(v) for v in _to_list(color, "color")]
+        _check_length(colors, "color", n)
+        columns["color"] = colors
     if frame is not None:
         frames = [_to_text(v) or None for v in _to_list(frame, "frame")]
         _check_length(frames, "frame", n)
@@ -504,16 +545,38 @@ def _default_text(trace: Any, base: Any, n: int) -> list[Any]:
     )
 
 
+def _trace_colors(trace: Any, base: Any, n: int) -> list[Any]:
+    """Return per-point marker colours, or a marker for the browser to resolve."""
+    for source in (trace, base):
+        value = source.marker.color
+        if isinstance(value, str):
+            return [value] * n
+        if value is not None:
+            values = _to_list(value, "marker.color")
+            if len(values) == n and all(isinstance(v, str) for v in values):
+                return values
+            break
+    return [TRACE_COLOR] * n
+
+
 def _columns_from_traces(
     fig: go.Figure,
     text: Any,
     priority: Any,
     visible: Any,
+    direction: Any,
+    color: Any,
     selector: Any,
     row: int | None,
     col: int | None,
 ) -> dict[str, list[Any]]:
-    for name, spec in (("text", text), ("priority", priority), ("visible", visible)):
+    for name, spec in (
+        ("text", text),
+        ("priority", priority),
+        ("visible", visible),
+        ("direction", None if isinstance(direction, str) else direction),
+        ("color", None if isinstance(color, str) else color),
+    ):
         if spec is not None and not callable(spec):
             raise TypeError(f"without x and y, {name} must be a function of the trace")
 
@@ -542,6 +605,8 @@ def _columns_from_traces(
             "frame",
             "priority",
             "visible",
+            "direction",
+            "color",
         )
     }
     for position, trace, frame_name in sources:
@@ -569,6 +634,25 @@ def _columns_from_traces(
             _visible_value(v)
             for v in _per_point(visible, trace, base, "visible", n, True)
         )
+        columns["direction"].extend(
+            _direction_value(v)
+            for v in (
+                [direction] * n
+                if isinstance(direction, str)
+                else _per_point(direction, trace, base, "direction", n, "both")
+            )
+        )
+        if isinstance(color, str) and color == TRACE_COLOR:
+            columns["color"].extend(_trace_colors(trace, base, n))
+        else:
+            columns["color"].extend(
+                _color_value(v)
+                for v in (
+                    [color] * n
+                    if isinstance(color, str)
+                    else _per_point(color, trace, base, "color", n, None)
+                )
+            )
     return columns
 
 
@@ -612,9 +696,11 @@ def _build_layer(
             key: _compact(columns[key])
             for key in ("xref", "yref", "trace", "frame", "priority", "visible")
         },
-        "solver": solver,
+        "solver": {**solver, "direction": _compact(columns["direction"])},
         "segment": {**_DEFAULT_SEGMENT, **dict(segment or {})},
     }
+    if any(value is not None for value in columns["color"]):
+        layer["color"] = _compact(columns["color"])
     if font:
         layer["font"] = dict(font)
     if label:
