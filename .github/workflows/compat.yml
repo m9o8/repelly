@@ -25,5 +25,5 @@ jobs:
       # Ubuntu blocks the user namespaces Chrome's sandbox needs for static export.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pixi update --environment default
-      - run: pixi list --environment default | grep -E "^(plotly|dash|kaleido|python) "
+      - run: pixi list --environment default | grep -E "^(plotly|dash|streamlit|kaleido|python) "
       - run: pixi run --environment default test-all
