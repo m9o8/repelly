@@ -157,3 +157,49 @@ test('maxOverlaps can differ per label', () => {
   const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxOverlaps: 0 } });
   assert.deepStrictEqual(Array.from(result.kept), [1, 0, 1]);
 });
+
+function crossingPairs(labels, result) {
+  const side = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  let crossings = 0;
+  for (let i = 0; i < labels.length; i++) {
+    for (let j = i + 1; j < labels.length; j++) {
+      const a = labels[i];
+      const b = labels[j];
+      if (side(a.x, a.y, result.x[i], result.y[i], b.x, b.y) *
+          side(a.x, a.y, result.x[i], result.y[i], result.x[j], result.y[j]) < 0 &&
+          side(b.x, b.y, result.x[j], result.y[j], a.x, a.y) *
+          side(b.x, b.y, result.x[j], result.y[j], result.x[i], result.y[i]) < 0) {
+        crossings++;
+      }
+    }
+  }
+  return crossings;
+}
+
+function scatteredClusters(n, seed) {
+  let state = seed;
+  const next = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const centres = [[250, 150], [520, 300], [620, 180]];
+  return Array.from({ length: n }, (_, i) => {
+    const [cx, cy] = centres[i % 3];
+    return label(cx + (next() - 0.5) * 220, cy + (next() - 0.5) * 150, { width: 44 + next() * 40, height: 18 });
+  });
+}
+
+test('leader lines rarely cross, without adding overlaps', () => {
+  let crossings = 0;
+  for (let seed = 1; seed <= 16; seed++) {
+    const labels = scatteredClusters(60, seed * 101);
+    const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+    crossings += crossingPairs(labels, result);
+    assert.strictEqual(overlappingPairs(labels, result), 0);
+  }
+  assert.ok(crossings <= 20, `found ${crossings} crossings`);
+});
+
+test('labels constrained to one axis are never swapped', () => {
+  const labels = [label(300, 300, { direction: 'x', startDx: 200, startDy: 0 }),
+    label(500, 300, { direction: 'x', startDx: -200, startDy: 0 })];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(Math.abs(result.y[0] - 300) < 1e-9 && Math.abs(result.y[1] - 300) < 1e-9);
+});
