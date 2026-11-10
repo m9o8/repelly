@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -850,3 +852,105 @@ def test_missing_global_plotly_warns_instead_of_failing(page, tmp_path):
     page.wait_for_timeout(400)
     assert [m for m in messages if "does not expose Plotly" in m]
     assert page.console_errors == []
+
+
+SPY_LABEL_RELAYOUTS = """() => {
+  window.__labelRelayouts = 0;
+  const relayout = Plotly.relayout;
+  Plotly.relayout = function (gd, update) {
+    if (update && typeof update === 'object' && 'annotations' in update) window.__labelRelayouts++;
+    return relayout.apply(this, arguments);
+  };
+}"""
+
+DRAWN = """() => Array.from(document.querySelectorAll('.annotation')).map(node => {
+  const group = node.querySelector('.annotation-text-g');
+  const path = node.querySelector('.annotation-arrow-g path');
+  const style = path && getComputedStyle(path);
+  return {
+    index: node.getAttribute('data-index'),
+    text: group.firstElementChild.getAttribute('transform'),
+    rotate: group.getAttribute('transform'),
+    d: path ? path.getAttribute('d') : null,
+    dash: path ? path.style.strokeDasharray : null,
+    look: path ? [path.parentNode.style.opacity, style.stroke, style.strokeWidth,
+                  path.parentNode.children.length].join('|') : null,
+  };
+})"""
+
+
+def zoom(page, factor):
+    page.evaluate(f"""() => {{
+      const gd = {GD};
+      const scaled = name => {{
+        const [a, b] = gd._fullLayout[name].range;
+        const mid = (a + b) / 2;
+        return [mid + (a - mid) * {factor}, mid + (b - mid) * {factor}];
+      }};
+      return Plotly.relayout(gd, {{'xaxis.range': scaled('xaxis'), 'yaxis.range': scaled('yaxis')}});
+    }}""")
+    page.wait_for_timeout(150)
+    wait_settled(page)
+
+
+def numbers(text):
+    return [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?(?:e-?\d+)?", text or "")]
+
+
+def assert_drawn_like_plotly(page):
+    """Labels moved in place must match Plotly redrawing them from the layout."""
+    moved = page.evaluate(DRAWN)
+    page.evaluate(f"""() => {{
+      const gd = {GD};
+      gd.__repelly.applying = true;
+      return Plotly.redraw(gd).then(() => {{ gd.__repelly.applying = false; }});
+    }}""")
+    native = page.evaluate(DRAWN)
+    assert [m["index"] for m in moved] == [n["index"] for n in native]
+    for mine, theirs in zip(moved, native, strict=True):
+        assert mine["look"] == theirs["look"]
+        for key in ("text", "rotate", "d", "dash"):
+            assert numbers(mine[key]) == pytest.approx(
+                numbers(theirs[key]), abs=0.01
+            ), key
+
+
+def crowded_figure(kind):
+    xs = [1 + 0.03 * (i % 7) + 0.004 * (i % 3) for i in range(35)]
+    ys = [1 + 0.02 * (i // 7) + 0.003 * (i % 4) for i in range(35)]
+    names = [f"gene-{i}" for i in range(35)]
+    if kind == "log":
+        xs = [10**x for x in xs]
+    fig = go.Figure(go.Scatter(x=xs, y=ys, mode="markers"))
+    if kind == "log":
+        fig.update_xaxes(type="log")
+    if kind == "boxed":
+        return add_label_repel(
+            fig, xs, ys, names, label={"bgcolor": "lightyellow", "borderwidth": 2}
+        )
+    return add_text_repel(fig, xs, ys, names)
+
+
+@pytest.mark.parametrize("kind", ["text", "boxed", "log"])
+def test_zoom_moves_labels_in_place_as_plotly_would_draw_them(page, tmp_path, kind):
+    render(page, crowded_figure(kind), tmp_path)
+    page.evaluate(SPY_LABEL_RELAYOUTS)
+    before = {a["name"]: (a["ax"], a["ay"]) for a in ours(page)}
+    for factor in (0.97, 1.04, 0.96):
+        zoom(page, factor)
+        assert_drawn_like_plotly(page)
+    after = {a["name"]: (a["ax"], a["ay"]) for a in ours(page)}
+    assert after.keys() == before.keys()
+    assert after != before
+    assert page.evaluate("() => window.__labelRelayouts") == 0
+    assert overlaps(page.evaluate(BOXES)) == []
+
+
+def test_editable_plots_still_relayout_labels(page, tmp_path):
+    render(page, crowded_figure("text"), tmp_path, config={"editable": True})
+    page.evaluate(SPY_LABEL_RELAYOUTS)
+    before = {a["name"]: (a["ax"], a["ay"]) for a in ours(page)}
+    zoom(page, 0.97)
+    after = {a["name"]: (a["ax"], a["ay"]) for a in ours(page)}
+    assert after != before
+    assert page.evaluate("() => window.__labelRelayouts") >= 1
