@@ -203,3 +203,11 @@ test('labels constrained to one axis are never swapped', () => {
   const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
   assert.ok(Math.abs(result.y[0] - 300) < 1e-9 && Math.abs(result.y[1] - 300) < 1e-9);
 });
+
+test('direction can differ per label', () => {
+  const labels = [label(400, 300, { direction: 'x' }), label(405, 300, { direction: 'y' }), label(410, 300)];
+  const result = solve({ labels, bounds: BOUNDS, options: NO_LIMITS });
+  assert.ok(Math.abs(result.y[0] - 300) < 1e-9);
+  assert.ok(Math.abs(result.x[1] - 405) < 1e-9);
+  assert.strictEqual(overlappingPairs(labels, result), 0);
+});

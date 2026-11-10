@@ -292,3 +292,74 @@ def test_combined_notebook_renderers_draw_once(base, monkeypatch):
     )
     add_text_repel(base, [1], [2], ["a"]).show()
     assert shown == ["iframe"]
+
+
+def test_color_per_label_stays_aligned_after_dropping(base):
+    result = add_text_repel(
+        base, [1, 2, 3], [1, None, 3], ["a", "b", "c"], color=["red", "green", "blue"]
+    )
+    assert layer(result)["color"] == ["red", "blue"]
+
+
+def test_scalar_color_and_direction_are_compact(base):
+    result = add_text_repel(base, [1, 2], [1, 2], ["a", "b"], color="navy")
+    assert layer(result)["color"] == "navy"
+    assert layer(result)["solver"]["direction"] == "both"
+
+
+def test_no_color_is_omitted(base):
+    assert "color" not in layer(add_text_repel(base, [1], [2], ["a"]))
+
+
+def test_direction_per_label(base):
+    result = add_text_repel(base, [1, 2], [1, 2], ["a", "b"], direction=["x", "y"])
+    assert layer(result)["solver"]["direction"] == ["x", "y"]
+
+
+def test_trace_color_uses_marker_colors():
+    fig = go.Figure()
+    fig.add_scatter(x=[1], y=[1], text=["a"], marker_color="red")
+    fig.add_scatter(x=[1, 2], y=[1, 2], text=["b", "c"], marker_color=["blue", "green"])
+    fig.add_scatter(x=[3], y=[3], text=["d"])
+    result = add_text_repel(fig, color="trace")
+    assert layer(result)["color"] == ["red", "blue", "green", "trace"]
+
+
+def test_trace_color_defers_numeric_marker_colors():
+    fig = go.Figure(
+        go.Scatter(x=[1, 2], y=[1, 2], text=["a", "b"], marker_color=[1, 2])
+    )
+    assert layer(add_text_repel(fig, color="trace"))["color"] == "trace"
+
+
+def test_trace_mode_callable_color_and_direction():
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], text=["a", "b"]))
+    result = add_text_repel(
+        fig,
+        color=lambda trace: ["red", "blue"],
+        direction=lambda trace: ["x", "both"],
+    )
+    assert layer(result)["color"] == ["red", "blue"]
+    assert layer(result)["solver"]["direction"] == ["x", "both"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"direction": "z"}, ValueError, "direction must be"),
+        ({"direction": ["x"]}, ValueError, "direction has 1"),
+        ({"direction": ["x", "z"]}, ValueError, "direction must be"),
+        ({"color": "trace"}, ValueError, "needs labels made from traces"),
+        ({"color": ["red"]}, ValueError, "color has 1"),
+        ({"color": [1, 2]}, ValueError, "color values must be strings"),
+    ],
+)
+def test_invalid_per_label_style(base, kwargs, error, message):
+    with pytest.raises(error, match=message):
+        add_text_repel(base, [1, 2], [1, 2], ["a", "b"], **kwargs)
+
+
+def test_trace_mode_rejects_sequences_for_color():
+    fig = go.Figure(go.Scatter(x=[1], y=[1], text=["a"]))
+    with pytest.raises(TypeError, match="color must be a function"):
+        add_text_repel(fig, color=["red"])

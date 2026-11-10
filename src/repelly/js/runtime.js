@@ -19,6 +19,7 @@
 
   var Solver = root.__repellySolver;
   var NAME_PREFIX = 'repelly-';
+  var TRACE_COLOR = 'trace';
   var DEBOUNCE = { render: 0, frame: 0, zoom: 60, resize: 120 };
   var MAX_CHAINED_RUNS = 3;
   var LINE_HEIGHT = 1.3;
@@ -215,6 +216,14 @@
     };
   }
 
+  function labelColor(gd, layer, i, trace) {
+    var color = at(layer.color, i);
+    if (color !== TRACE_COLOR) return color || undefined;
+    var full = (gd._fullData || [])[trace] || {};
+    var resolved = (full.marker && full.marker.color) || (full.line && full.line.color);
+    return typeof resolved === 'string' ? resolved : undefined;
+  }
+
   function collectLabels(gd, state, cfg) {
     var full = gd._fullLayout;
     var frame = activeFrame(gd, state, cfg);
@@ -285,6 +294,7 @@
           yValue: yValue,
           halfBoxX: (size.width + chrome) / 2,
           halfBoxY: (size.height + chrome) / 2,
+          color: labelColor(gd, layer, i, trace),
           spec: {
             x: px,
             y: py,
@@ -292,7 +302,7 @@
             height: size.height + chrome + 2 * solver.box_padding,
             priority: at(layer.priority, i),
             maxOverlaps: solver.max_overlaps == null ? Infinity : solver.max_overlaps,
-            direction: solver.direction,
+            direction: at(solver.direction, i),
             pull: solver.force_pull,
             push: solver.force,
             pointPadding: solver.point_padding,
@@ -386,7 +396,9 @@
       arrowcolor: showSegment ? (segment.color || 'rgba(90,90,90,0.7)') : 'rgba(0,0,0,0)',
       standoff: radius
     };
-    if (layer.font) annotation.font = layer.font;
+    if (layer.font || entry.color) {
+      annotation.font = Object.assign({}, layer.font, entry.color ? { color: entry.color } : null);
+    }
     if (layer.label) {
       ['bgcolor', 'bordercolor', 'borderwidth', 'borderpad'].forEach(function (key) {
         if (layer.label[key] != null) annotation[key] = layer.label[key];
