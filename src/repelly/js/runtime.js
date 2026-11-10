@@ -26,6 +26,7 @@
   var SCRIPT_SCALE = 0.7;
   var DEFAULT_RADIUS = 3;
   var DEDUPE_CELL = 3;
+  var SVG_NS = 'http://www.w3.org/2000/svg';
   var ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
 
   function at(column, i) {
@@ -558,6 +559,202 @@
     return root.Plotly.relayout(gd, update);
   }
 
+  // Every field of an annotation except those a move may change: its offset
+  // and its leader colour, which turns transparent for short leaders.
+  function fixedPart(annotation) {
+    var copy = Object.assign({}, annotation);
+    delete copy.ax;
+    delete copy.ay;
+    delete copy.arrowcolor;
+    return JSON.stringify(copy);
+  }
+
+  // Splits a CSS colour into an opaque rgb() string and its alpha, the way
+  // Plotly styles a leader line. Returns null for a colour it cannot read.
+  function splitColor(color) {
+    var ctx = measureContext();
+    ctx.fillStyle = '#010203';
+    ctx.fillStyle = color;
+    var value = ctx.fillStyle;
+    var hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value);
+    if (hex) {
+      if (value === '#010203') return null;
+      return {
+        rgb: 'rgb(' + parseInt(hex[1], 16) + ', ' + parseInt(hex[2], 16) + ', ' + parseInt(hex[3], 16) + ')',
+        alpha: 1
+      };
+    }
+    var rgba = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(value);
+    if (!rgba) return null;
+    return { rgb: 'rgb(' + rgba[1] + ', ' + rgba[2] + ', ' + rgba[3] + ')', alpha: +rgba[4] };
+  }
+
+  // Plotly's segment intersection test, so that leader-line decisions match
+  // its drawing exactly. Returns the crossing point or null.
+  function segmentsIntersect(x1, y1, x2, y2, x3, y3, x4, y4) {
+    var a = x2 - x1;
+    var b = x3 - x1;
+    var c = x4 - x3;
+    var d = y2 - y1;
+    var e = y3 - y1;
+    var f = y4 - y3;
+    var det = a * f - c * d;
+    if (det === 0) return null;
+    var t = (b * f - c * e) / det;
+    var u = (b * d - a * e) / det;
+    return u < 0 || u > 1 || t < 0 || t > 1 ? null : { x: x1 + a * t, y: y1 + d * t };
+  }
+
+  // Works out how to move one drawn annotation to a new offset, reproducing
+  // the geometry of Plotly's own annotation drawing for a centred, unrotated
+  // label with a plain leader line. Returns null, without touching anything,
+  // whenever that geometry might not match.
+  function planMove(gd, index, full, next) {
+    if (full.textangle || full.arrowhead || full.startarrowhead || full.startstandoff ||
+        full.xshift || full.yshift || full.arrowside !== 'end' ||
+        full.axref !== 'pixel' || full.ayref !== 'pixel' ||
+        full.xanchor !== 'center' || full.yanchor !== 'middle') {
+      return null;
+    }
+    var fullLayout = gd._fullLayout;
+    var xa = fullLayout[axisName(full.xref)];
+    var ya = fullLayout[axisName(full.yref)];
+    var node = gd.querySelector('.annotation[data-index="' + index + '"]');
+    var textGroup = node && node.querySelector('.annotation-text-g');
+    var inner = textGroup && textGroup.firstElementChild;
+    var bg = inner && inner.querySelector('rect.bg');
+    if (!xa || !ya || !bg) return null;
+
+    var headX = xa._offset + xa.r2p(full.x);
+    var headY = ya._offset + ya.r2p(full.y);
+    // Plotly keeps a pixel-offset label inside the figure.
+    var centreX = Math.min(fullLayout.width, Math.max(0, headX + next.ax));
+    var centreY = Math.min(fullLayout.height, Math.max(0, headY + next.ay));
+    var width = +bg.getAttribute('width');
+    var height = +bg.getAttribute('height');
+    var border = full.borderwidth || 0;
+    if (!Number.isFinite(headX + headY + width + height)) return null;
+
+    // No leader line is drawn when the point lies inside the label box,
+    // decided as Plotly does: by the parity of box edges a diagonal ray from
+    // the point crosses.
+    var left = centreX - width / 2;
+    var top = centreY - height / 2;
+    var edges = [
+      [left, top, left, top + height],
+      [left, top + height, left + width, top + height],
+      [left + width, top + height, left + width, top],
+      [left + width, top, left, top]
+    ];
+    var inside = false;
+    edges.forEach(function (e) {
+      if (segmentsIntersect(headX, headY, headX + 1e6, headY + 1e6, e[0], e[1], e[2], e[3])) inside = !inside;
+    });
+    var arrowGroup = node.querySelector('.annotation-arrow-g');
+    var path = arrowGroup && arrowGroup.querySelector('path');
+    if (arrowGroup && (!path || arrowGroup.children.length !== 1)) return null;
+
+    var plan = {
+      layoutItem: gd.layout.annotations[index],
+      full: full,
+      next: next,
+      node: node,
+      inner: inner,
+      textGroup: textGroup,
+      translate: 'translate(' + Math.round(centreX - (width + border) / 2) + ',' +
+        Math.round(centreY - (height + border) / 2) + ')',
+      rotate: 'rotate(0,' + centreX + ',' + centreY + ')',
+      arrowGroup: arrowGroup,
+      path: path,
+      removeArrow: inside && !!arrowGroup,
+      addArrow: !inside && !arrowGroup
+    };
+    if (!inside) {
+      // The line runs from where it leaves the label box to the point, and the
+      // standoff is cut off its end with a dash pattern, as Plotly does.
+      var tailX = centreX;
+      var tailY = centreY;
+      edges.forEach(function (e) {
+        var hit = segmentsIntersect(tailX, tailY, headX, headY, e[0], e[1], e[2], e[3]);
+        if (hit) {
+          tailX = hit.x;
+          tailY = hit.y;
+        }
+      });
+      var length = Math.hypot(headX - tailX, headY - tailY);
+      var standoff = full.standoff || 0;
+      plan.d = 'M' + tailX + ',' + tailY + 'L' + headX + ',' + headY;
+      plan.dash = length < standoff ? '0px,100px' :
+        '0px,0px,' + (length - standoff) + 'px,' + length + 'px';
+      if (plan.addArrow || next.arrowcolor !== full.arrowcolor) {
+        plan.color = splitColor(next.arrowcolor);
+        if (!plan.color) return null;
+      }
+    }
+    return plan;
+  }
+
+  function applyMove(plan) {
+    plan.inner.setAttribute('transform', plan.translate);
+    plan.textGroup.setAttribute('transform', plan.rotate);
+    if (plan.removeArrow) plan.arrowGroup.remove();
+    if (plan.addArrow) {
+      // The same structure Plotly draws for a leader line without arrowhead.
+      plan.arrowGroup = document.createElementNS(SVG_NS, 'g');
+      plan.arrowGroup.setAttribute('class', 'annotation-arrow-g');
+      plan.path = document.createElementNS(SVG_NS, 'path');
+      plan.path.style.strokeWidth = plan.full.arrowwidth + 'px';
+      plan.arrowGroup.appendChild(plan.path);
+      plan.node.appendChild(plan.arrowGroup);
+    }
+    if (plan.d) {
+      plan.path.setAttribute('d', plan.d);
+      plan.path.style.strokeDasharray = plan.dash;
+    }
+    if (plan.color) {
+      plan.arrowGroup.style.opacity = plan.color.alpha;
+      plan.path.style.stroke = plan.color.rgb;
+      plan.path.style.strokeOpacity = 1;
+    }
+    plan.layoutItem.ax = plan.full.ax = plan.next.ax;
+    plan.layoutItem.ay = plan.full.ay = plan.next.ay;
+    plan.layoutItem.arrowcolor = plan.full.arrowcolor = plan.next.arrowcolor;
+  }
+
+  // Plotly treats any annotation edit as needing a full recalculation and
+  // replot, which on a large figure costs far more than the solve. When only
+  // label offsets changed, move the drawn annotations directly and write the
+  // offsets into the layout, so later redraws and image export agree. Returns
+  // false, having changed nothing, when a full relayout is needed instead.
+  function moveInPlace(gd, cfg, annotations) {
+    var context = gd._context || {};
+    var edits = context.edits || {};
+    if (context.editable || edits.annotationPosition || edits.annotationTail) return false;
+    if (Object.keys(pinnedRanges(gd, cfg)).length) return false;
+
+    var list = (gd.layout && gd.layout.annotations) || [];
+    var fullList = gd._fullLayout.annotations || [];
+    var slots = [];
+    list.forEach(function (a, k) { if (isOurs(a)) slots.push(k); });
+    if (slots.length !== annotations.length) return false;
+
+    var plans = [];
+    for (var n = 0; n < slots.length; n++) {
+      var k = slots[n];
+      var current = list[k];
+      var next = annotations[n];
+      var full = fullList[k];
+      if (!full || full._input !== current || fixedPart(current) !== fixedPart(next)) return false;
+      if (current.ax === next.ax && current.ay === next.ay && current.arrowcolor === next.arrowcolor) continue;
+      var plan = planMove(gd, k, full, next);
+      if (!plan) return false;
+      plans.push(plan);
+    }
+
+    plans.forEach(applyMove);
+    return true;
+  }
+
   function settle(gd, state, runParts) {
     state.applying = false;
     var cfg = getConfig(gd);
@@ -603,6 +800,17 @@
     }
 
     state.signature = sig;
+    var moved = false;
+    try {
+      moved = moveInPlace(gd, cfg, annotations);
+    } catch (error) {
+      moved = false;
+    }
+    if (moved) {
+      state.parts = runParts;
+      return Promise.resolve();
+    }
+
     state.applying = true;
     state.promise = Promise.resolve(apply(gd, cfg, annotations)).then(
       function () { settle(gd, state, runParts); },

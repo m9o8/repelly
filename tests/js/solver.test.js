@@ -11,7 +11,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-const { solve } = require(path.join(__dirname, '..', '..', 'src', 'repelly', 'js', 'solver.js'));
+const SOLVER_PATH = path.join(__dirname, '..', '..', 'src', 'repelly', 'js', 'solver.js');
+const { solve } = require(SOLVER_PATH);
 
 const BOUNDS = { x0: 0, y0: 0, x1: 800, y1: 600 };
 const NO_LIMITS = { maxTimeMs: Infinity, maxOverlaps: null, seed: 7 };
@@ -284,4 +285,39 @@ test('reports separately whether a label hits a label or a point', () => {
   const many = [label(30, 10), label(30, 10), label(30, 10)];
   const stacked = solve({ labels: many, bounds: tiny, options: { ...NO_LIMITS, maxIter: 20 } });
   assert.ok(Array.from(stacked.overlapsLabel).some(Boolean));
+});
+
+test('sparse layouts stop long before the iteration limit', () => {
+  // Each label's own point is an obstacle. Some labels end up held against the
+  // plot edge, where the bounds undo every push; the solver must notice that
+  // nothing moves any more instead of sweeping until maxIter.
+  const { createRandom } = require(SOLVER_PATH);
+  for (let seed = 1; seed <= 10; seed++) {
+    const random = createRandom(seed);
+    const labels = Array.from({ length: 20 }, () =>
+      label(20 + random() * 760, 20 + random() * 560, { width: 40 + random() * 40 }));
+    const obstacles = { x: labels.map((l) => l.x), y: labels.map((l) => l.y), r: labels.map(() => 3) };
+    const result = solve({ labels, bounds: BOUNDS, obstacles, options: NO_LIMITS });
+    assert.strictEqual(overlappingPairs(labels, result), 0);
+    assert.ok(result.sweeps < 200, `seed ${seed} took ${result.sweeps} sweeps`);
+  }
+});
+
+test('obstacles are found wherever they lie', () => {
+  const labels = [label(-500, -400), label(5000, 3000)];
+  const obstacles = { x: [-500, 5000, -480, 4985], y: [-400, 3000, -400, 3000], r: [3, 3, 3, 3] };
+  const bounds = { x0: -1000, y0: -1000, x1: 6000, y1: 4000 };
+  const result = solve({ labels, bounds, obstacles, options: NO_LIMITS });
+  assert.deepStrictEqual(Array.from(result.overlapsPoint), [0, 0]);
+});
+
+test('rescued labels prefer spots whose leader lines cross nothing', () => {
+  let crossings = 0;
+  for (let seed = 1; seed <= 32; seed++) {
+    const labels = scatteredClusters(60, seed * 37);
+    const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, seed } });
+    crossings += crossingPairs(labels, result);
+    assert.strictEqual(overlappingPairs(labels, result), 0);
+  }
+  assert.ok(crossings <= 40, `found ${crossings} crossings`);
 });
