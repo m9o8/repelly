@@ -13,9 +13,10 @@
 //
 // Method: position-based relaxation. Each sweep applies a decaying pull towards
 // the anchor and then projects overlapping boxes apart along their axis of
-// least penetration, regularly swapping labels whose leader lines cross. Labels
-// that are still stuck afterwards get a ring search around their anchor, and a
-// final pass makes any remaining swaps that do not cause new overlaps.
+// least penetration, regularly swapping labels whose leader lines cross. The
+// relaxation stops early once nothing moves. Labels that are still stuck then
+// get a ring search around their anchor, and a final pass makes any remaining
+// swaps that do not cause new overlaps.
 (function (root) {
   'use strict';
 
@@ -28,6 +29,11 @@
   var UNTANGLE_EVERY = 5;
   var UNTANGLE_UNTIL = 0.7;
   var PULL_SLACK = 2;
+  var STALL_SWEEPS = 20;
+
+  function atLeastOne(v) {
+    return v > 1 ? v : 1;
+  }
 
   function createRandom(seed) {
     var state = (seed | 0) ^ 0x2545f491;
@@ -46,46 +52,79 @@
 
   // Uniform hash grid over point obstacles. Each obstacle is stored only under
   // its centre, and queries are widened by the largest radius.
+  // Dense grid in compressed-row form: obstacles are counting-sorted by cell
+  // into flat typed arrays, cells numbered row by row. The cells a query
+  // touches in one grid row are then one contiguous slice, so a query is a few
+  // plain array scans with no hashing and no callbacks.
   function ObstacleGrid(obstacles) {
     var n = obstacles && obstacles.x ? obstacles.x.length : 0;
-    this.x = n ? obstacles.x : [];
-    this.y = n ? obstacles.y : [];
-    this.r = n ? obstacles.r : [];
     this.n = n;
     this.maxR = 0;
-    this.cell = 24;
-    this.cells = new Map();
+    this.ranges = new Int32Array(0);
+    this.rangeCount = 0;
+    if (!n) return;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (var i = 0; i < n; i++) {
-      if (this.r[i] > this.maxR) this.maxR = this.r[i];
-      var key = this.key(Math.floor(this.x[i] / this.cell), Math.floor(this.y[i] / this.cell));
-      var bucket = this.cells.get(key);
-      if (bucket) bucket.push(i);
-      else this.cells.set(key, [i]);
+      var ox = obstacles.x[i], oy = obstacles.y[i];
+      if (ox < minX) minX = ox;
+      if (ox > maxX) maxX = ox;
+      if (oy < minY) minY = oy;
+      if (oy > maxY) maxY = oy;
+      if (obstacles.r[i] > this.maxR) this.maxR = obstacles.r[i];
     }
+    var cell = Math.max(24, (maxX - minX) / 512, (maxY - minY) / 512);
+    var cols = Math.floor((maxX - minX) / cell) + 1;
+    var rows = Math.floor((maxY - minY) / cell) + 1;
+    var start = new Int32Array(cols * rows + 1);
+    var cellOf = new Int32Array(n);
+    for (var j = 0; j < n; j++) {
+      var c = Math.floor((obstacles.y[j] - minY) / cell) * cols + Math.floor((obstacles.x[j] - minX) / cell);
+      cellOf[j] = c;
+      start[c + 1]++;
+    }
+    for (var s = 0; s < cols * rows; s++) start[s + 1] += start[s];
+    var fill = start.slice(0, cols * rows);
+    this.x = new Float64Array(n);
+    this.y = new Float64Array(n);
+    this.r = new Float64Array(n);
+    for (var k = 0; k < n; k++) {
+      var at = fill[cellOf[k]]++;
+      this.x[at] = obstacles.x[k];
+      this.y[at] = obstacles.y[k];
+      this.r[at] = obstacles.r[k];
+    }
+    this.minX = minX;
+    this.minY = minY;
+    this.cell = cell;
+    this.cols = cols;
+    this.rows = rows;
+    this.start = start;
+    this.ranges = new Int32Array(2 * rows);
   }
 
-  ObstacleGrid.prototype.key = function (cx, cy) {
-    return (cx + 32768) * 65536 + (cy + 32768);
-  };
-
-  // Calls visit(index) for obstacles whose centre may touch the given rectangle
-  // once expanded by `reach`. Returns early when visit returns true.
-  ObstacleGrid.prototype.query = function (x0, y0, x1, y1, reach, visit) {
-    if (!this.n) return;
+  // Fills this.ranges with [from, to) index pairs covering every obstacle whose
+  // centre may touch the rectangle once expanded by `reach`, and returns the
+  // number of pairs.
+  ObstacleGrid.prototype.slices = function (x0, y0, x1, y1, reach) {
+    if (!this.n) return 0;
     var margin = reach + this.maxR;
-    var cx0 = Math.floor((x0 - margin) / this.cell);
-    var cx1 = Math.floor((x1 + margin) / this.cell);
-    var cy0 = Math.floor((y0 - margin) / this.cell);
-    var cy1 = Math.floor((y1 + margin) / this.cell);
-    for (var cx = cx0; cx <= cx1; cx++) {
-      for (var cy = cy0; cy <= cy1; cy++) {
-        var bucket = this.cells.get(this.key(cx, cy));
-        if (!bucket) continue;
-        for (var k = 0; k < bucket.length; k++) {
-          if (visit(bucket[k]) === true) return;
-        }
+    var cx0 = Math.max(0, Math.floor((x0 - margin - this.minX) / this.cell));
+    var cx1 = Math.min(this.cols - 1, Math.floor((x1 + margin - this.minX) / this.cell));
+    var cy0 = Math.max(0, Math.floor((y0 - margin - this.minY) / this.cell));
+    var cy1 = Math.min(this.rows - 1, Math.floor((y1 + margin - this.minY) / this.cell));
+    if (cx0 > cx1 || cy0 > cy1) return 0;
+    var count = 0;
+    for (var cy = cy0; cy <= cy1; cy++) {
+      var row = cy * this.cols;
+      var from = this.start[row + cx0];
+      var to = this.start[row + cx1 + 1];
+      if (from < to) {
+        this.ranges[2 * count] = from;
+        this.ranges[2 * count + 1] = to;
+        count++;
       }
     }
+    return count;
   };
 
   function orderByPriority(labels) {
@@ -167,6 +206,7 @@
     var moveY = new Uint8Array(n);
     var tx = new Float64Array(n);
     var ty = new Float64Array(n);
+    var pointPad = new Float64Array(n);
     var sumX = 0;
     var sumY = 0;
 
@@ -174,6 +214,7 @@
       var spec = labels[s];
       hw[s] = spec.width / 2;
       hh[s] = spec.height / 2;
+      pointPad[s] = spec.pointPadding || 0;
       moveX[s] = spec.direction === 'y' ? 0 : 1;
       moveY[s] = spec.direction === 'x' ? 0 : 1;
       tx[s] = targetX(spec);
@@ -256,14 +297,25 @@
     // Sweep and prune along x. `sorted` is reused between sweeps, so it is
     // nearly in order each time and insertion sort stays close to linear.
     var sorted = active.slice();
+    // Sweep along the axis on which labels are most spread out relative to
+    // their size. For text that is usually y: labels are several times wider
+    // than tall, so a y window holds far fewer candidates than an x window.
+    var spanX = 0, spanY = 0;
+    for (var sa = 0; sa < m; sa++) {
+      spanX += hw[active[sa]];
+      spanY += hh[active[sa]];
+    }
+    var sweepY = spanY / atLeastOne(bounds.y1 - bounds.y0) < spanX / atLeastOne(bounds.x1 - bounds.x0);
+    var sp = sweepY ? py : px, sh = sweepY ? hh : hw;
+    var op = sweepY ? px : py, oh = sweepY ? hw : hh;
 
     function resolveLabels() {
       var hits = 0;
       for (var a1 = 1; a1 < m; a1++) {
         var moving = sorted[a1];
-        var left = px[moving] - hw[moving];
+        var left = sp[moving] - sh[moving];
         var b1 = a1 - 1;
-        while (b1 >= 0 && px[sorted[b1]] - hw[sorted[b1]] > left) {
+        while (b1 >= 0 && sp[sorted[b1]] - sh[sorted[b1]] > left) {
           sorted[b1 + 1] = sorted[b1];
           b1--;
         }
@@ -273,7 +325,8 @@
         var i = sorted[u];
         for (var v = u + 1; v < m; v++) {
           var j = sorted[v];
-          if (px[j] - hw[j] > px[i] + hw[i]) break;
+          if (sp[j] - sh[j] > sp[i] + sh[i]) break;
+          if (Math.abs(op[i] - op[j]) >= oh[i] + oh[j]) continue;
           hits += pushApart(i, j);
         }
       }
@@ -282,23 +335,27 @@
 
     function resolveObstacles(i) {
       var hits = 0;
-      var pad = labels[i].pointPadding || 0;
-      grid.query(px[i] - hw[i], py[i] - hh[i], px[i] + hw[i], py[i] + hh[i], pad, function (k) {
-        var r = grid.r[k] + pad;
-        var overlapX = Math.min(px[i] + hw[i], grid.x[k] + r) - Math.max(px[i] - hw[i], grid.x[k] - r);
-        var overlapY = Math.min(py[i] + hh[i], grid.y[k] + r) - Math.max(py[i] - hh[i], grid.y[k] - r);
-        if (overlapX <= 0 || overlapY <= 0) return false;
-        hits++;
-        var useX = moveX[i] && (!moveY[i] || overlapX < overlapY);
-        if (useX) {
-          var sx = px[i] === grid.x[k] ? (random() < 0.5 ? -1 : 1) : (px[i] < grid.x[k] ? -1 : 1);
-          px[i] += sx * (overlapX + EPSILON);
-        } else if (moveY[i]) {
-          var sy = py[i] === grid.y[k] ? (random() < 0.5 ? -1 : 1) : (py[i] < grid.y[k] ? -1 : 1);
-          py[i] += sy * (overlapY + EPSILON);
+      var pad = pointPad[i];
+      var gx = grid.x, gy = grid.y, gr = grid.r, ranges = grid.ranges;
+      var count = grid.slices(px[i] - hw[i], py[i] - hh[i], px[i] + hw[i], py[i] + hh[i], pad);
+      for (var s = 0; s < count; s++) {
+        for (var k = ranges[2 * s], end = ranges[2 * s + 1]; k < end; k++) {
+          var r = gr[k] + pad;
+          var overlapX = Math.min(px[i] + hw[i], gx[k] + r) - Math.max(px[i] - hw[i], gx[k] - r);
+          if (overlapX <= 0) continue;
+          var overlapY = Math.min(py[i] + hh[i], gy[k] + r) - Math.max(py[i] - hh[i], gy[k] - r);
+          if (overlapY <= 0) continue;
+          hits++;
+          var useX = moveX[i] && (!moveY[i] || overlapX < overlapY);
+          if (useX) {
+            var sx = px[i] === gx[k] ? (random() < 0.5 ? -1 : 1) : (px[i] < gx[k] ? -1 : 1);
+            px[i] += sx * (overlapX + EPSILON);
+          } else if (moveY[i]) {
+            var sy = py[i] === gy[k] ? (random() < 0.5 ? -1 : 1) : (py[i] < gy[k] ? -1 : 1);
+            py[i] += sy * (overlapY + EPSILON);
+          }
         }
-        return false;
-      });
+      }
       return hits;
     }
 
@@ -327,6 +384,7 @@
     var prevX = new Float64Array(n);
     var prevY = new Float64Array(n);
     var sweeps = 0;
+    var stalled = 0;
 
     for (var iter = 0; iter < maxIter && m > 0; iter++) {
       if ((iter & 7) === 7 && outOfTime()) break;
@@ -354,7 +412,18 @@
         var move = Math.abs(px[idx] - prevX[idx]) + Math.abs(py[idx] - prevY[idx]);
         if (move > largest) largest = move;
       }
-      if (hits === 0 && largest < 0.1) break;
+      if (largest < 0.1) {
+        // Nothing moved: either solved, or stuck against a bound with contacts
+        // that further sweeps cannot clear. Leave the rest to the rescue.
+        // An early stop skips the periodic untangling, so untangle once more
+        // and only stop when that finds nothing to swap.
+        if (hits === 0 || ++stalled >= STALL_SWEEPS) {
+          if (m > UNTANGLE_LIMIT || iter >= maxIter * UNTANGLE_UNTIL || swapCrossingLabels() === 0) break;
+          stalled = 0;
+        }
+      } else {
+        stalled = 0;
+      }
     }
 
     // Pull-free sweeps to clear contacts the pull may have left behind.
@@ -388,17 +457,16 @@
     }
 
     function touchesPoint(i, x, y) {
-      var touching = false;
-      var pad = labels[i].pointPadding || 0;
-      grid.query(x - hw[i], y - hh[i], x + hw[i], y + hh[i], pad, function (k) {
-        var r = grid.r[k] + pad;
-        if (Math.abs(x - grid.x[k]) < hw[i] + r && Math.abs(y - grid.y[k]) < hh[i] + r) {
-          touching = true;
-          return true;
+      var pad = pointPad[i];
+      var gx = grid.x, gy = grid.y, gr = grid.r, ranges = grid.ranges;
+      var count = grid.slices(x - hw[i], y - hh[i], x + hw[i], y + hh[i], pad);
+      for (var s = 0; s < count; s++) {
+        for (var k = ranges[2 * s], end = ranges[2 * s + 1]; k < end; k++) {
+          var r = gr[k] + pad;
+          if (Math.abs(x - gx[k]) < hw[i] + r && Math.abs(y - gy[k]) < hh[i] + r) return true;
         }
-        return false;
-      });
-      return touching;
+      }
+      return false;
     }
 
     function isColliding(i) {
@@ -406,19 +474,53 @@
     }
 
     // Ring search for labels the relaxation could not free, nearest ring first.
+    // Counts leader lines that the line from label i's anchor to (x, y) crosses.
+    function crossingsAt(i, x, y) {
+      var ax = labels[i].x, ay = labels[i].y;
+      var count = 0;
+      for (var c = 0; c < m; c++) {
+        var j = active[c];
+        if (j === i) continue;
+        var cx = labels[j].x, cy = labels[j].y, dx = px[j], dy = py[j];
+        if (Math.max(ax, x) < Math.min(cx, dx) || Math.max(cx, dx) < Math.min(ax, x) ||
+            Math.max(ay, y) < Math.min(cy, dy) || Math.max(cy, dy) < Math.min(ay, y)) continue;
+        var d1 = (x - ax) * (cy - ay) - (y - ay) * (cx - ax);
+        var d2 = (x - ax) * (dy - ay) - (y - ay) * (dx - ax);
+        var d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+        var d4 = (dx - cx) * (y - cy) - (dy - cy) * (x - cx);
+        if (d1 * d2 < 0 && d3 * d4 < 0) count++;
+      }
+      return count;
+    }
+
+    // Ring search for labels the relaxation could not free, nearest ring first.
+    // Each ring starts from the side the label already sits on, and prefers a
+    // free spot whose leader line crosses no other.
     function rescue(i) {
       var stepX = hw[i] * 0.75 + 4;
       var stepY = hh[i] * 1.25 + 4;
+      var start = Math.atan2(py[i] - ty[i], px[i] - tx[i]);
       for (var ring = 1; ring <= RING_COUNT; ring++) {
+        var bestX = 0, bestY = 0, bestCross = Infinity;
         for (var t = 0; t < RING_ANGLES; t++) {
-          var theta = (t / RING_ANGLES) * 2 * Math.PI;
+          // 0, +1, -1, +2, -2, ... steps away from the starting angle.
+          var step = (t + 1) >> 1;
+          var theta = start + (t & 1 ? step : -step) * (2 * Math.PI / RING_ANGLES);
           var x = tx[i] + (moveX[i] ? Math.cos(theta) * (hw[i] + ring * stepX) : 0);
           var y = ty[i] + (moveY[i] ? Math.sin(theta) * (hh[i] + ring * stepY) : 0);
-          if (fitsAt(i, x, y, -1)) {
-            px[i] = x;
-            py[i] = y;
-            return true;
+          if (!fitsAt(i, x, y, -1)) continue;
+          var crossings = crossingsAt(i, x, y);
+          if (crossings < bestCross) {
+            bestCross = crossings;
+            bestX = x;
+            bestY = y;
+            if (crossings === 0) break;
           }
+        }
+        if (bestCross < Infinity) {
+          px[i] = bestX;
+          py[i] = bestY;
+          return true;
         }
       }
       return false;
@@ -446,46 +548,80 @@
 
     // During relaxation a swap may overlap neighbours, because later sweeps
     // separate them again. The ggrepel solver resolves crossings the same way.
-    function swapCrossingLabels() {
-      var swaps = 0;
-      for (var c1 = 0; c1 < m; c1++) {
-        for (var c2 = c1 + 1; c2 < m; c2++) {
-          var i = active[c1];
-          var j = active[c2];
-          if (!moveX[i] || !moveY[i] || !moveX[j] || !moveY[j] || !segmentsCross(i, j)) continue;
-          var swapX = px[i];
-          var swapY = py[i];
-          px[i] = px[j];
-          py[i] = py[j];
-          px[j] = swapX;
-          py[j] = swapY;
-          clampToBounds(i);
-          clampToBounds(j);
-          swaps++;
+    // Broad phase for leader-line crossings: two segments can only cross when
+    // their bounding boxes overlap, so sweep the boxes along x, taken at the
+    // start of the pass, and hand only those pairs to `visit`. Only labels free
+    // to move on both axes take part, because only they may be swapped.
+    var segFree, segLoX, segHiX, segLoY, segHiY;
+
+    function forEachBoxedPair(visit) {
+      if (!segFree) {
+        segFree = [];
+        for (var sf = 0; sf < m; sf++) if (moveX[active[sf]] && moveY[active[sf]]) segFree.push(active[sf]);
+        segLoX = new Float64Array(n);
+        segHiX = new Float64Array(n);
+        segLoY = new Float64Array(n);
+        segHiY = new Float64Array(n);
+      }
+      var f = segFree.length;
+      for (var a = 0; a < f; a++) {
+        var k = segFree[a];
+        segLoX[k] = Math.min(labels[k].x, px[k]);
+        segHiX[k] = Math.max(labels[k].x, px[k]);
+        segLoY[k] = Math.min(labels[k].y, py[k]);
+        segHiY[k] = Math.max(labels[k].y, py[k]);
+      }
+      for (var b = 1; b < f; b++) {
+        var moving = segFree[b];
+        var c = b - 1;
+        while (c >= 0 && segLoX[segFree[c]] > segLoX[moving]) {
+          segFree[c + 1] = segFree[c];
+          c--;
+        }
+        segFree[c + 1] = moving;
+      }
+      for (var u = 0; u < f; u++) {
+        var i = segFree[u];
+        for (var v = u + 1; v < f; v++) {
+          var j = segFree[v];
+          if (segLoX[j] > segHiX[i]) break;
+          if (segLoY[j] > segHiY[i] || segLoY[i] > segHiY[j]) continue;
+          visit(i, j);
         }
       }
+    }
+
+    function swapCrossingLabels() {
+      var swaps = 0;
+      forEachBoxedPair(function (i, j) {
+        if (!segmentsCross(i, j)) return;
+        var swapX = px[i];
+        var swapY = py[i];
+        px[i] = px[j];
+        py[i] = py[j];
+        px[j] = swapX;
+        py[j] = swapY;
+        clampToBounds(i);
+        clampToBounds(j);
+        swaps++;
+      });
       return swaps;
     }
 
     if (m <= UNTANGLE_LIMIT) {
       for (var pass = 0; pass < 2; pass++) {
         var swapped = false;
-        for (var e1 = 0; e1 < m; e1++) {
-          for (var e2 = e1 + 1; e2 < m; e2++) {
-            var si = active[e1];
-            var sj = active[e2];
-            if (!moveX[si] || !moveY[si] || !moveX[sj] || !moveY[sj]) continue;
-            if (!segmentsCross(si, sj)) continue;
-            if (fitsAt(si, px[sj], py[sj], sj) && fitsAt(sj, px[si], py[si], si)) {
-              var tx = px[si], ty = py[si];
-              px[si] = px[sj];
-              py[si] = py[sj];
-              px[sj] = tx;
-              py[sj] = ty;
-              swapped = true;
-            }
+        forEachBoxedPair(function (si, sj) {
+          if (!segmentsCross(si, sj)) return;
+          if (fitsAt(si, px[sj], py[sj], sj) && fitsAt(sj, px[si], py[si], si)) {
+            var keepX = px[si], keepY = py[si];
+            px[si] = px[sj];
+            py[si] = py[sj];
+            px[sj] = keepX;
+            py[sj] = keepY;
+            swapped = true;
           }
-        }
+        });
         if (!swapped || outOfTime()) break;
       }
     }
