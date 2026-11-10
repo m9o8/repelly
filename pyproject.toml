@@ -11,7 +11,7 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 authors = [{ name = "Moritz Peist" }]
-keywords = ["plotly", "dash", "ggrepel", "labels", "annotations", "visualization"]
+keywords = ["plotly", "dash", "streamlit", "ggrepel", "labels", "annotations", "visualization"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Framework :: Dash",
@@ -32,6 +32,7 @@ dependencies = ["plotly>=6.2"]
 [project.optional-dependencies]
 static = ["kaleido>=1.0"]
 dash = ["dash>=3.0"]
+streamlit = ["streamlit>=1.52"]
 
 [project.urls]
 Homepage = "https://github.com/m9o8/repelly"
@@ -68,7 +69,7 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 python = ">=3.10"
 
 [tool.pixi.pypi-dependencies]
-repelly = { path = ".", editable = true, extras = ["static", "dash"] }
+repelly = { path = ".", editable = true, extras = ["static", "dash", "streamlit"] }
 
 [tool.pixi.feature.test.dependencies]
 nodejs = ">=22"
@@ -104,6 +105,7 @@ python = "3.10.*"
 [tool.pixi.feature.min.pypi-dependencies]
 plotly = "==6.2.0"
 dash = "==3.0.0"
+streamlit = "==1.52.0"
 
 [tool.pixi.environments]
 default = { features = ["test", "lint", "build"] }

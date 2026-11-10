@@ -17,7 +17,8 @@
 - They are native Plotly annotations, so they appear in the modebar's PNG download.
 - Works with `plotly.express`, including facets, animations and `scattergl`.
 - Supports linear, log, date, category and reversed axes.
-- Runs in HTML files, the browser, notebooks and Dash, and exports to static images.
+- Runs in HTML files, the browser, notebooks, Dash and Streamlit, and exports to static
+  images.
 
 ## Installation
 
@@ -25,11 +26,12 @@
 pip install repelly
 ```
 
-Optional extras add static image export and Dash:
+Optional extras add static image export, Dash and Streamlit:
 
 ```bash
 pip install "repelly[static]"
 pip install "repelly[dash]"
+pip install "repelly[streamlit]"
 ```
 
 Requires Python 3.10+ and Plotly 6.2+.
@@ -113,6 +115,22 @@ app.layout = dcc.Graph(figure=fig)
 
 Each solve updates the graph's layout, so a callback listening to `relayoutData` also
 fires when labels are placed.
+
+### Streamlit
+
+Call `init` in each run of the script, then use `st.plotly_chart` as normal:
+
+```python
+import streamlit as st
+import repelly.streamlit
+
+repelly.streamlit.init()
+st.plotly_chart(fig)
+```
+
+Labels re-solve on zoom, resize and reruns, and work with `on_select`, tabs and multipage
+apps. `init` needs Streamlit 1.52 or newer. It runs repelly's script in the page through
+`st.html(..., unsafe_allow_javascript=True)`.
 
 ### Notebooks
 
