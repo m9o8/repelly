@@ -99,6 +99,18 @@
     return order;
   }
 
+  function isNudged(label) {
+    return !!(label.nudgeX || label.nudgeY);
+  }
+
+  function targetX(label) {
+    return label.x + (label.nudgeX || 0);
+  }
+
+  function targetY(label) {
+    return label.y + (label.nudgeY || 0);
+  }
+
   // Drops labels that would start on top of more than their allowed number of
   // higher priority labels, mirroring the crowding limit in ggrepel. A label's
   // own `maxOverlaps` takes precedence over the solver-wide default.
@@ -113,8 +125,8 @@
       if (Number.isFinite(limit)) {
         for (var p = 0; p < placed.length && count <= limit; p++) {
           var b = labels[placed[p]];
-          if (Math.abs(a.x - b.x) * 2 < a.width + b.width &&
-              Math.abs(a.y - b.y) * 2 < a.height + b.height) {
+          if (Math.abs(targetX(a) - targetX(b)) * 2 < a.width + b.width &&
+              Math.abs(targetY(a) - targetY(b)) * 2 < a.height + b.height) {
             count++;
           }
         }
@@ -153,6 +165,8 @@
     var hh = new Float64Array(n);
     var moveX = new Uint8Array(n);
     var moveY = new Uint8Array(n);
+    var tx = new Float64Array(n);
+    var ty = new Float64Array(n);
     var sumX = 0;
     var sumY = 0;
 
@@ -162,21 +176,30 @@
       hh[s] = spec.height / 2;
       moveX[s] = spec.direction === 'y' ? 0 : 1;
       moveY[s] = spec.direction === 'x' ? 0 : 1;
-      px[s] = spec.x;
-      py[s] = spec.y;
+      tx[s] = targetX(spec);
+      ty[s] = targetY(spec);
+      px[s] = tx[s];
+      py[s] = ty[s];
       if (kept[s]) {
-        sumX += spec.x;
-        sumY += spec.y;
+        sumX += tx[s];
+        sumY += ty[s];
       }
     }
 
+    function clampInto(i, area) {
+      var loX = area.x0 + hw[i];
+      var hiX = area.x1 - hw[i];
+      var loY = area.y0 + hh[i];
+      var hiY = area.y1 - hh[i];
+      px[i] = loX > hiX ? (area.x0 + area.x1) / 2 : Math.min(hiX, Math.max(loX, px[i]));
+      py[i] = loY > hiY ? (area.y0 + area.y1) / 2 : Math.min(hiY, Math.max(loY, py[i]));
+    }
+
+    // A label's own area can be too small to hold it, so the plot area is applied
+    // last and always wins.
     function clampToBounds(i) {
-      var loX = bounds.x0 + hw[i];
-      var hiX = bounds.x1 - hw[i];
-      var loY = bounds.y0 + hh[i];
-      var hiY = bounds.y1 - hh[i];
-      px[i] = loX > hiX ? (bounds.x0 + bounds.x1) / 2 : Math.min(hiX, Math.max(loX, px[i]));
-      py[i] = loY > hiY ? (bounds.y0 + bounds.y1) / 2 : Math.min(hiY, Math.max(loY, py[i]));
+      if (labels[i].bounds) clampInto(i, labels[i].bounds);
+      clampInto(i, bounds);
     }
 
     // Seed positions: reuse the previous solution when given, otherwise fan out
@@ -187,16 +210,19 @@
       var i0 = active[q];
       var l0 = labels[i0];
       if (Number.isFinite(l0.startDx) && Number.isFinite(l0.startDy)) {
-        px[i0] = l0.x + (moveX[i0] ? l0.startDx : 0);
-        py[i0] = l0.y + (moveY[i0] ? l0.startDy : 0);
+        px[i0] = moveX[i0] ? l0.x + l0.startDx : tx[i0];
+        py[i0] = moveY[i0] ? l0.y + l0.startDy : ty[i0];
+      } else if (isNudged(l0)) {
+        px[i0] = tx[i0] + (moveX[i0] ? random() - 0.5 : 0);
+        py[i0] = ty[i0] + (moveY[i0] ? random() - 0.5 : 0);
       } else {
-        var offX = l0.x - centreX;
-        var offY = l0.y - centreY;
+        var offX = tx[i0] - centreX;
+        var offY = ty[i0] - centreY;
         var base = offX * offX + offY * offY > 1 ? Math.atan2(offY, offX) : q * GOLDEN_ANGLE;
         var angle = base + (random() - 0.5) * 1.2;
         var reach = (l0.radius || 0) + (l0.pointPadding || 0) + 2;
-        px[i0] = l0.x + (moveX[i0] ? Math.cos(angle) * (hw[i0] + reach) : 0);
-        py[i0] = l0.y + (moveY[i0] ? Math.sin(angle) * (hh[i0] + reach) : 0);
+        px[i0] = tx[i0] + (moveX[i0] ? Math.cos(angle) * (hw[i0] + reach) : 0);
+        py[i0] = ty[i0] + (moveY[i0] ? Math.sin(angle) * (hh[i0] + reach) : 0);
       }
       clampToBounds(i0);
     }
@@ -276,15 +302,19 @@
       return hits;
     }
 
-    // Moves a label towards its anchor without closing the last few pixels, so
-    // the pull does not fight the push from the label's own point.
+    // Moves a label towards its target. Unless nudged, the target is the label's
+    // own point, so the last few pixels stay open and the pull does not fight the
+    // push from that point.
     function pull(i, rate) {
-      var dx = labels[i].x - px[i];
-      var dy = labels[i].y - py[i];
-      var pad = (labels[i].radius || 0) + (labels[i].pointPadding || 0) + PULL_SLACK;
-      var gap = Math.max(Math.abs(dx) - hw[i], Math.abs(dy) - hh[i]) - pad;
-      if (gap <= 0) return;
-      var limit = Math.min(1, gap / Math.max(1e-6, Math.sqrt(dx * dx + dy * dy)));
+      var dx = tx[i] - px[i];
+      var dy = ty[i] - py[i];
+      var limit = 1;
+      if (!isNudged(labels[i])) {
+        var pad = (labels[i].radius || 0) + (labels[i].pointPadding || 0) + PULL_SLACK;
+        var gap = Math.max(Math.abs(dx) - hw[i], Math.abs(dy) - hh[i]) - pad;
+        if (gap <= 0) return;
+        limit = Math.min(1, gap / Math.max(1e-6, Math.sqrt(dx * dx + dy * dy)));
+      }
       var amount = Math.min(rate * (labels[i].pull == null ? 1 : labels[i].pull), limit);
       if (moveX[i]) px[i] += dx * amount;
       if (moveY[i]) py[i] += dy * amount;
@@ -340,8 +370,9 @@
     }
 
     function fitsAt(i, x, y, ignore) {
-      if (x - hw[i] < bounds.x0 || x + hw[i] > bounds.x1 ||
-          y - hh[i] < bounds.y0 || y + hh[i] > bounds.y1) {
+      var area = labels[i].bounds || bounds;
+      if (x - hw[i] < area.x0 || x + hw[i] > area.x1 ||
+          y - hh[i] < area.y0 || y + hh[i] > area.y1) {
         return false;
       }
       for (var c = 0; c < m; c++) {
@@ -368,14 +399,13 @@
 
     // Ring search for labels the relaxation could not free, nearest ring first.
     function rescue(i) {
-      var l = labels[i];
       var stepX = hw[i] * 0.75 + 4;
       var stepY = hh[i] * 1.25 + 4;
       for (var ring = 1; ring <= RING_COUNT; ring++) {
         for (var t = 0; t < RING_ANGLES; t++) {
           var theta = (t / RING_ANGLES) * 2 * Math.PI;
-          var x = l.x + (moveX[i] ? Math.cos(theta) * (hw[i] + ring * stepX) : 0);
-          var y = l.y + (moveY[i] ? Math.sin(theta) * (hh[i] + ring * stepY) : 0);
+          var x = tx[i] + (moveX[i] ? Math.cos(theta) * (hw[i] + ring * stepX) : 0);
+          var y = ty[i] + (moveY[i] ? Math.sin(theta) * (hh[i] + ring * stepY) : 0);
           if (fitsAt(i, x, y, -1)) {
             px[i] = x;
             py[i] = y;

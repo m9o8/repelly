@@ -363,3 +363,46 @@ def test_trace_mode_rejects_sequences_for_color():
     fig = go.Figure(go.Scatter(x=[1], y=[1], text=["a"]))
     with pytest.raises(TypeError, match="color must be a function"):
         add_text_repel(fig, color=["red"])
+
+
+def test_nudges_are_stored_per_label_and_stay_aligned(base):
+    result = add_text_repel(
+        base, [1, None, 3], [1, 2, 3], ["a", "b", "c"], nudge_x=[10, 20, 30], nudge_y=5
+    )
+    assert layer(result)["nudge_x"] == [10.0, 30.0]
+    assert layer(result)["nudge_y"] == 5.0
+
+
+def test_zero_nudges_and_open_limits_are_omitted(base):
+    result = add_text_repel(base, [1], [2], ["a"], xlim=(None, None))
+    assert not {"nudge_x", "nudge_y", "xlim", "ylim"} & set(layer(result))
+
+
+def test_limits_accept_dates_and_open_sides(base):
+    result = add_text_repel(
+        base, [1], [2], ["a"], xlim=(dt.date(2024, 1, 1), None), ylim=[0, 5]
+    )
+    assert layer(result)["xlim"] == ["2024-01-01", None]
+    assert layer(result)["ylim"] == [0, 5]
+
+
+def test_trace_mode_callable_nudge():
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], text=["a", "b"]))
+    result = add_text_repel(fig, nudge_y=lambda trace: [5, 10], nudge_x=3)
+    assert layer(result)["nudge_y"] == [5.0, 10.0]
+    assert layer(result)["nudge_x"] == 3.0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"nudge_x": [1]}, ValueError, "nudge_x has 1"),
+        ({"nudge_y": ["a", "b"]}, ValueError, "nudge_y values must be numbers"),
+        ({"nudge_x": "a"}, TypeError, "nudge_x must be a sequence"),
+        ({"xlim": (1, 2, 3)}, ValueError, "xlim must have two"),
+        ({"ylim": 5}, TypeError, "ylim must be a sequence"),
+    ],
+)
+def test_invalid_nudges_and_limits(base, kwargs, error, message):
+    with pytest.raises(error, match=message):
+        add_text_repel(base, [1, 2], [1, 2], ["a", "b"], **kwargs)

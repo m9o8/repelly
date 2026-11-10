@@ -58,6 +58,10 @@ def add_text_repel(
     point_padding: float = 2.0,
     direction: Any = "both",
     color: Any = None,
+    nudge_x: Any = 0.0,
+    nudge_y: Any = 0.0,
+    xlim: Any = None,
+    ylim: Any = None,
     max_iter: int = 400,
     max_time_ms: float = 40.0,
     max_overlaps: int | None = 10,
@@ -121,6 +125,13 @@ def add_text_repel(
         Text colour, overriding ``font["color"]``. One colour, a sequence with
         one per label, or in from-traces mode a function of the trace. In
         from-traces mode, ``"trace"`` uses each point's marker colour.
+    nudge_x, nudge_y:
+        Preferred offset of the label from its point, in pixels, with positive
+        values moving right and up. One value, a sequence with one per label, or
+        in from-traces mode a function of the trace.
+    xlim, ylim:
+        ``(low, high)`` data values the label must stay within, on top of the
+        plot area. Use ``None`` for a side with no limit.
     max_iter, max_time_ms:
         Iteration and time limits for one solve. Calls sharing a subplot are
         solved together, using the largest limits among them.
@@ -167,6 +178,10 @@ def add_text_repel(
         point_padding=point_padding,
         direction=direction,
         color=color,
+        nudge_x=nudge_x,
+        nudge_y=nudge_y,
+        xlim=xlim,
+        ylim=ylim,
         max_iter=max_iter,
         max_time_ms=max_time_ms,
         max_overlaps=max_overlaps,
@@ -220,6 +235,10 @@ def _add_layer(
     visible: Any = None,
     direction: Any = "both",
     color: Any = None,
+    nudge_x: Any = 0.0,
+    nudge_y: Any = 0.0,
+    xlim: Any = None,
+    ylim: Any = None,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
     on: str | Iterable[str] = EVENTS,
@@ -232,6 +251,11 @@ def _add_layer(
 
     events = _validate_events(on)
     solver = _validate_solver(solver)
+    limits = {
+        "xlim": _validate_limit(xlim, "xlim"),
+        "ylim": _validate_limit(ylim, "ylim"),
+    }
+    nudges = {"nudge_x": nudge_x, "nudge_y": nudge_y}
     result = as_repel_figure(fig, copy=True)
 
     if x is None:
@@ -240,7 +264,16 @@ def _add_layer(
         if xref is not None or yref is not None or secondary_y is not None:
             raise ValueError("xref, yref and secondary_y need explicit x and y")
         columns = _columns_from_traces(
-            result, text, priority, visible, direction, color, selector, row, col
+            result,
+            text,
+            priority,
+            visible,
+            direction,
+            color,
+            nudges,
+            selector,
+            row,
+            col,
         )
     else:
         if selector is not None:
@@ -249,10 +282,11 @@ def _add_layer(
             raise ValueError("text is required when x and y are given")
         refs = _resolve_refs(result, row, col, secondary_y, xref, yref)
         columns = _columns_from_arrays(
-            x, y, text, refs, frame, priority, visible, direction, color
+            x, y, text, refs, frame, priority, visible, direction, color, nudges
         )
 
     layer = _build_layer(_drop_unlabelled(columns), label, font, segment, solver)
+    layer.update({key: value for key, value in limits.items() if value is not None})
     _store_layer(result, layer, events)
     return result
 
@@ -307,6 +341,15 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError(f"{name} must be None or an integer >= {minimum}")
     return {key: _to_native(value) for key, value in merged.items()}
+
+
+def _validate_limit(limit: Any, name: str) -> list[Any] | None:
+    if limit is None:
+        return None
+    values = [_to_native(v) for v in _to_list(limit, name)]
+    if len(values) != 2:
+        raise ValueError(f"{name} must have two values, (low, high)")
+    return None if values == [None, None] else values
 
 
 def _is_real(value: Any) -> bool:
@@ -417,6 +460,15 @@ def _direction_value(value: Any) -> str:
     return native
 
 
+def _nudge_value(value: Any, name: str) -> float:
+    native = _to_native(value)
+    if native is None:
+        return 0.0
+    if not _is_real(native):
+        raise ValueError(f"{name} values must be numbers, got {value!r}")
+    return float(native)
+
+
 def _color_value(value: Any) -> str | None:
     native = _to_native(value)
     if native is not None and not isinstance(native, str):
@@ -434,6 +486,7 @@ def _columns_from_arrays(
     visible: Any,
     direction: Any,
     color: Any,
+    nudges: dict[str, Any],
 ) -> dict[str, list[Any]]:
     xs = [_to_native(v) for v in _to_list(x, "x")]
     n = len(xs)
@@ -467,6 +520,13 @@ def _columns_from_arrays(
         colors = [_color_value(v) for v in _to_list(color, "color")]
         _check_length(colors, "color", n)
         columns["color"] = colors
+    for name, nudge in nudges.items():
+        if isinstance(nudge, numbers.Real):
+            columns[name] = [_nudge_value(nudge, name)] * n
+        else:
+            offsets = [_nudge_value(v, name) for v in _to_list(nudge, name)]
+            _check_length(offsets, name, n)
+            columns[name] = offsets
     if frame is not None:
         frames = [_to_text(v) or None for v in _to_list(frame, "frame")]
         _check_length(frames, "frame", n)
@@ -566,6 +626,7 @@ def _columns_from_traces(
     visible: Any,
     direction: Any,
     color: Any,
+    nudges: dict[str, Any],
     selector: Any,
     row: int | None,
     col: int | None,
@@ -576,6 +637,10 @@ def _columns_from_traces(
         ("visible", visible),
         ("direction", None if isinstance(direction, str) else direction),
         ("color", None if isinstance(color, str) else color),
+        *(
+            (name, None if isinstance(nudge, numbers.Real) else nudge)
+            for name, nudge in nudges.items()
+        ),
     ):
         if spec is not None and not callable(spec):
             raise TypeError(f"without x and y, {name} must be a function of the trace")
@@ -607,6 +672,7 @@ def _columns_from_traces(
             "visible",
             "direction",
             "color",
+            *nudges,
         )
     }
     for position, trace, frame_name in sources:
@@ -651,6 +717,15 @@ def _columns_from_traces(
                     [color] * n
                     if isinstance(color, str)
                     else _per_point(color, trace, base, "color", n, None)
+                )
+            )
+        for name, nudge in nudges.items():
+            columns[name].extend(
+                _nudge_value(v, name)
+                for v in (
+                    [nudge] * n
+                    if isinstance(nudge, numbers.Real)
+                    else _per_point(nudge, trace, base, name, n, 0.0)
                 )
             )
     return columns
@@ -701,6 +776,9 @@ def _build_layer(
     }
     if any(value is not None for value in columns["color"]):
         layer["color"] = _compact(columns["color"])
+    for name in ("nudge_x", "nudge_y"):
+        if any(columns[name]):
+            layer[name] = _compact(columns[name])
     if font:
         layer["font"] = dict(font)
     if label:

@@ -508,3 +508,126 @@ def test_direction_per_label_constrains_each_label(page, tmp_path):
     moved = {a["text"]: (a["ax"], a["ay"]) for a in ours(page)}
     assert moved["a"][1] == 0 and moved["c"][1] == 0
     assert moved["b"][0] == 0 and moved["d"][0] == 0
+
+
+def plot_box(page, xaxis="xaxis", yaxis="yaxis"):
+    return page.evaluate(f"""() => {{
+      const gd = {GD};
+      const rect = gd.getBoundingClientRect();
+      const xa = gd._fullLayout.{xaxis}, ya = gd._fullLayout.{yaxis};
+      return {{left: rect.left + xa._offset, top: rect.top + ya._offset,
+               width: xa._length, height: ya._length}};
+    }}""")
+
+
+def test_nudge_moves_label_right_and_up(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    render(page, add_text_repel(fig, [1], [1], ["a"], nudge_x=90, nudge_y=60), tmp_path)
+    annotation = ours(page)[0]
+    assert annotation["ax"] == pytest.approx(90, abs=3)
+    assert annotation["ay"] == pytest.approx(-60, abs=3)
+
+
+def test_nudge_differs_per_label_and_labels_still_separate(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    xs = [1.0, 1.001, 1.002, 1.5]
+    result = add_text_repel(
+        fig, xs, [1.0] * 4, ["aaaa", "bbbb", "cccc", "dddd"], nudge_y=[50, 50, 50, -70]
+    )
+    render(page, result, tmp_path)
+    moved = {a["text"]: a["ay"] for a in ours(page)}
+    assert moved["dddd"] == pytest.approx(70, abs=3)
+    assert all(moved[name] < 0 for name in ("aaaa", "bbbb", "cccc"))
+    assert overlaps(page.evaluate(BOXES)) == []
+
+
+def test_nudged_label_survives_zoom(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    render(page, add_text_repel(fig, [1], [1], ["a"], nudge_x=90), tmp_path)
+    page.evaluate(f"() => Plotly.relayout({GD}, {{'xaxis.range': [0.5, 1.5]}})")
+    page.wait_for_timeout(300)
+    wait_settled(page)
+    assert ours(page)[0]["ax"] == pytest.approx(90, abs=3)
+
+
+@pytest.mark.parametrize(
+    ("xs", "limit", "layout"),
+    [
+        ([1, 2, 3, 4], (2.5, None), {}),
+        ([10, 100, 1000, 10000], (500, None), {"xaxis_type": "log"}),
+        (
+            ["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"],
+            ("2024-02-15", None),
+            {},
+        ),
+        ([1, 2, 3, 4], (2.5, None), {"xaxis_autorange": "reversed"}),
+    ],
+    ids=["linear", "log", "date", "reversed"],
+)
+def test_xlim_keeps_labels_on_one_side(page, tmp_path, xs, limit, layout):
+    fig = go.Figure(go.Scatter(x=xs, y=[1, 2, 3, 4], mode="markers"))
+    fig.update_layout(**layout)
+    render(
+        page, add_text_repel(fig, xs, [1, 2, 3, 4], list("abcd"), xlim=limit), tmp_path
+    )
+    boundary = page.evaluate(f"""() => {{
+      const gd = {GD};
+      const xa = gd._fullLayout.xaxis;
+      return gd.getBoundingClientRect().left + xa._offset + xa.d2p({limit[0]!r});
+    }}""")
+    reversed_axis = bool(layout.get("xaxis_autorange"))
+    boxes = page.evaluate(BOXES)
+    assert len(boxes) == 4
+    for box in boxes:
+        if reversed_axis:
+            assert box["right"] <= boundary + 1
+        else:
+            assert box["left"] >= boundary - 1
+
+
+def test_ylim_upper_bound_is_respected(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2, 3], y=[1, 2, 3], mode="markers"))
+    render(
+        page,
+        add_text_repel(fig, [1, 2, 3], [1, 2, 3], list("abc"), ylim=(None, 1.5)),
+        tmp_path,
+    )
+    boundary = page.evaluate(f"""() => {{
+      const gd = {GD};
+      const ya = gd._fullLayout.yaxis;
+      return gd.getBoundingClientRect().top + ya._offset + ya.d2p(1.5);
+    }}""")
+    assert all(box["top"] >= boundary - 1 for box in page.evaluate(BOXES))
+
+
+def test_limit_outside_the_view_does_not_lose_labels(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    result = add_text_repel(fig, [1, 2], [1, 2], ["a", "b"], xlim=(100, 200))
+    render(page, result, tmp_path)
+    assert page.evaluate(COUNT_OURS) == 2
+    assert page.console_errors == []
+    box = plot_box(page)
+    for label in page.evaluate(BOXES):
+        assert label["right"] <= box["left"] + box["width"] + 1
+
+
+def test_limits_apply_to_each_call_only(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2, 3], y=[1, 2, 3], mode="markers"))
+    result = add_text_repel(fig, [1], [1], ["free"])
+    result = add_text_repel(result, [2], [2], ["held"], xlim=(2.5, None))
+    render(page, result, tmp_path)
+    boundary = page.evaluate(f"""() => {{
+      const gd = {GD};
+      const xa = gd._fullLayout.xaxis;
+      return gd.getBoundingClientRect().left + xa._offset + xa.d2p(2.5);
+    }}""")
+    boxes = {b["text"]: b for b in page.evaluate(BOXES)}
+    assert boxes["held"]["left"] >= boundary - 1
+    assert boxes["free"]["left"] < boundary
+
+
+def test_bake_keeps_nudges(chrome_path):
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    labelled = add_text_repel(fig, [1], [1], ["a"], nudge_x=90)
+    baked = bake(labelled, width=800, height=500)
+    assert baked.layout.annotations[0].ax == pytest.approx(90, abs=3)
