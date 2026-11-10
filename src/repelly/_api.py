@@ -64,6 +64,7 @@ def add_text_repel(
     ylim: Any = None,
     max_iter: int = 400,
     max_time_ms: float = 40.0,
+    initial_max_time_ms: float = 250.0,
     max_overlaps: int | None = 10,
     max_labels: int | None = None,
     seed: int = 42,
@@ -133,8 +134,12 @@ def add_text_repel(
         ``(low, high)`` data values the label must stay within, on top of the
         plot area. Use ``None`` for a side with no limit.
     max_iter, max_time_ms:
-        Iteration and time limits for one solve. Calls sharing a subplot are
-        solved together, using the largest limits among them.
+        Iteration and time limits for one solve, in milliseconds for the time.
+        Calls sharing a subplot are solved together, using the largest limits
+        among them.
+    initial_max_time_ms:
+        Time limit when labels are first placed. Later solves start from the
+        previous positions and need less, so they use ``max_time_ms``.
     max_overlaps:
         Drop a label that starts on top of more than this many higher-priority
         labels. ``None`` keeps every label. Applies to this call's labels.
@@ -184,6 +189,7 @@ def add_text_repel(
         ylim=ylim,
         max_iter=max_iter,
         max_time_ms=max_time_ms,
+        initial_max_time_ms=initial_max_time_ms,
         max_overlaps=max_overlaps,
         max_labels=max_labels,
         seed=seed,
@@ -307,6 +313,7 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         "point_padding": 2.0,
         "max_iter": 400,
         "max_time_ms": 40.0,
+        "initial_max_time_ms": 250.0,
         "max_overlaps": 10,
         "max_labels": None,
         "seed": 42,
@@ -325,6 +332,7 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         "box_padding",
         "point_padding",
         "max_time_ms",
+        "initial_max_time_ms",
         "min_segment_length",
     ):
         value = merged[name]

@@ -693,3 +693,96 @@ def test_bake_is_quiet_when_everything_fits(chrome_path, recwarn):
     fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
     bake(add_text_repel(fig, [1, 2], [1, 2], ["a", "b"]), width=700, height=500)
     assert not [w for w in recwarn if "repelly" in str(w.message)]
+
+
+RECORD_SOLVER_BUDGETS = """(() => {
+  let api;
+  window.__budgets = [];
+  Object.defineProperty(window, '__repellySolver', {
+    configurable: true,
+    get() { return api; },
+    set(value) {
+      const original = value.solve;
+      value.solve = function (input) {
+        window.__budgets.push(input.options.maxTimeMs);
+        return original(input);
+      };
+      api = value;
+    },
+  });
+})()"""
+
+
+def budgets(page):
+    return page.evaluate("() => window.__budgets")
+
+
+def test_first_render_gets_the_longer_budget_and_zoom_the_short_one(page, tmp_path):
+    page.add_init_script(RECORD_SOLVER_BUDGETS)
+    fig = go.Figure(go.Scatter(x=[1, 2, 3], y=[1, 2, 3], mode="markers"))
+    render(page, add_text_repel(fig, [1, 2, 3], [1, 2, 3], list("abc")), tmp_path)
+    assert budgets(page)[0] == 250
+    seen = len(budgets(page))
+    page.evaluate(f"() => Plotly.relayout({GD}, {{'xaxis.range': [0.8, 2.6]}})")
+    page.wait_for_timeout(300)
+    wait_settled(page)
+    assert len(budgets(page)) > seen
+    assert set(budgets(page)[seen:]) == {40}
+
+
+def test_custom_budgets_are_used(page, tmp_path):
+    page.add_init_script(RECORD_SOLVER_BUDGETS)
+    fig = go.Figure(go.Scatter(x=[1, 2, 3], y=[1, 2, 3], mode="markers"))
+    result = add_text_repel(
+        fig,
+        [1, 2, 3],
+        [1, 2, 3],
+        list("abc"),
+        initial_max_time_ms=123,
+        max_time_ms=17,
+    )
+    render(page, result, tmp_path)
+    assert budgets(page)[0] == 123
+    seen = len(budgets(page))
+    page.evaluate(f"() => Plotly.relayout({GD}, {{'xaxis.range': [0.8, 2.6]}})")
+    page.wait_for_timeout(300)
+    wait_settled(page)
+    assert set(budgets(page)[seen:]) == {17}
+
+
+def test_animation_frames_keep_the_short_budget(page, tmp_path):
+    page.add_init_script(RECORD_SOLVER_BUDGETS)
+    frame = pd.DataFrame(
+        {
+            "x": [1, 2, 1, 2],
+            "y": [1, 2, 2, 1],
+            "t": ["one", "one", "two", "two"],
+            "n": list("pqrs"),
+        }
+    )
+    fig = px.scatter(frame, x="x", y="y", animation_frame="t", text="n")
+    fig.update_traces(mode="markers")
+    fig.update_xaxes(range=[0, 3])
+    fig.update_yaxes(range=[0, 3])
+    render(page, add_text_repel(fig), tmp_path, auto_play=False)
+    seen = len(budgets(page))
+    page.evaluate(
+        f"() => Plotly.animate({GD}, ['two'], "
+        "{mode: 'immediate', frame: {duration: 0}, transition: {duration: 0}})"
+    )
+    page.wait_for_function(f"() => {GD}.layout.annotations.some(a => a.text === 'r')")
+    wait_settled(page)
+    assert budgets(page)[seen:] and set(budgets(page)[seen:]) == {40}
+
+
+def test_dense_chart_is_fully_separated_on_first_render(page, tmp_path):
+    n = 100
+    xs = [1 + 0.01 * (i % 10) for i in range(n)]
+    ys = [1 + 0.01 * (i // 10) for i in range(n)]
+    fig = go.Figure(go.Scatter(x=xs, y=ys, mode="markers"))
+    fig.update_layout(width=1000, height=650)
+    result = add_text_repel(
+        fig, xs, ys, [f"item-{i}" for i in range(n)], max_overlaps=None
+    )
+    render(page, result, tmp_path)
+    assert overlaps(page.evaluate(BOXES)) == []

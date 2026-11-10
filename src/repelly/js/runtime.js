@@ -387,17 +387,25 @@
 
   // Calls sharing a panel are solved together, so these limits apply to the
   // whole solve: the most generous iteration and time limits win.
-  function solveOptions(entries, exact) {
+  function solveOptions(entries, exact, initial) {
     var iter = 0;
     var time = 0;
     var seed = null;
     entries.forEach(function (entry) {
       var solver = entry.layer.solver;
       iter = Math.max(iter, solver.max_iter);
-      time = Math.max(time, solver.max_time_ms);
+      time = Math.max(time, initial ? solver.initial_max_time_ms : solver.max_time_ms);
       if (seed == null) seed = solver.seed;
     });
     return { maxIter: iter, maxTimeMs: exact ? Infinity : time, seed: seed };
+  }
+
+  // A panel solved from scratch has no earlier positions to build on, so it gets
+  // the longer budget. Animation frames keep the short one to stay smooth.
+  function isInitialSolve(entries, trigger) {
+    return trigger === 'render' && entries.every(function (entry) {
+      return entry.spec.startDx === undefined;
+    });
   }
 
   function buildAnnotation(entry, x, y, radius) {
@@ -457,7 +465,7 @@
         labels: entries.map(function (e) { return e.spec; }),
         bounds: panel.bounds,
         obstacles: collected.obstacles[key],
-        options: solveOptions(entries, exact)
+        options: solveOptions(entries, exact, isInitialSolve(entries, state.trigger))
       });
 
       var hidden = new Uint8Array(entries.length);
@@ -594,6 +602,7 @@
 
   function schedule(gd, state, trigger) {
     if (state.timer) clearTimeout(state.timer);
+    state.trigger = trigger;
     state.timer = setTimeout(function () {
       state.timer = null;
       run(gd, state, false);
@@ -666,6 +675,7 @@
       timer: null,
       chained: 0,
       frame: null,
+      trigger: 'render',
       stats: { dropped: 0, unresolved: 0 },
       reported: { dropped: 0, unresolved: 0 }
     };

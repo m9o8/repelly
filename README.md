@@ -147,7 +147,8 @@ fixed, if you need one to pass elsewhere.
 | `xlim`, `ylim` | plot area | `(low, high)` data values labels must stay within; `None` leaves a side open |
 | `max_overlaps` | `10` | Drop a label starting on more than this many higher-priority labels; `None` keeps all |
 | `max_labels` | none | Maximum labels per subplot from this call, by priority |
-| `max_iter`, `max_time_ms` | `400`, `40` | Solver limits for one solve |
+| `max_iter`, `max_time_ms` | `400`, `40` | Solver limits for one solve; time in milliseconds |
+| `initial_max_time_ms` | `250` | Time limit when labels are first placed; the solver stops sooner if it finishes |
 | `seed` | `42` | Makes placement reproducible |
 | `min_segment_length` | `6` | Hide the connector below this distance in pixels |
 | `avoid_points` | `True` | Keep labels off every marker in the subplot |
