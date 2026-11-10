@@ -111,8 +111,10 @@ repelly.dash.init_app(app)
 app.layout = dcc.Graph(figure=fig)
 ```
 
-Each solve updates the graph's layout, so a callback listening to `relayoutData` also
-fires when labels are placed.
+Placing labels for the first time, or changing which labels are shown, updates the
+graph's layout, so a callback listening to `relayoutData` also fires then. When a
+re-solve only moves labels, repelly moves them in place without a relayout, so that
+callback does not fire.
 
 ### Notebooks
 
