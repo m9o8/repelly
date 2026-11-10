@@ -116,9 +116,15 @@ fires when labels are placed.
 
 ### Notebooks
 
-JupyterLab and VS Code default to a Plotly renderer that cannot run custom JavaScript, so
-repelly shows the figure in an iframe there. It loads Plotly from a CDN; for offline use
-call `fig.show(include_plotlyjs=True)`, which embeds about 5 MB per output.
+**JupyterLab** uses its built-in Plotly, so charts work offline and add little to the
+notebook. When you reopen a saved notebook, JupyterLab shows a saved preview without
+labels until you hover over the chart.
+
+**VS Code needs internet access for notebook charts.** It does not let scripts reach its
+built-in Plotly, so repelly shows each chart in an iframe that loads Plotly from a CDN.
+Offline, the chart shows a message instead. To work offline anyway, call
+`fig.show(include_plotlyjs=True)`, which embeds about 5 MB in each output. HTML files,
+browser output, Dash and static images all work offline in VS Code as usual.
 
 ### Static images
 

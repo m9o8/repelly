@@ -807,3 +807,46 @@ def test_label_on_a_data_point_is_not_called_an_overlap(page, tmp_path):
 def test_bake_reports_labels_on_data_points(chrome_path):
     with pytest.warns(UserWarning, match="still cover a data point"):
         bake(add_text_repel(marker_carpet(), [0.5], [0.5], ["label"]))
+
+
+def test_iframe_explains_when_plotly_cannot_load(page, tmp_path):
+    page.context.route("https://cdn.plot.ly/**", lambda route: route.abort())
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    labelled = add_text_repel(fig, [1], [1], ["a"])
+    target = tmp_path / "host.html"
+    target.write_text(
+        f"<!doctype html><body>{labelled._iframe_html('cdn', {})}</body>",
+        encoding="utf-8",
+    )
+    page.goto(target.as_uri())
+    message = page.frame_locator("iframe").locator("body")
+    message.get_by_text("Plotly could not be loaded").wait_for(timeout=10000)
+    assert "include_plotlyjs=True" in message.inner_text()
+
+
+def test_iframe_shows_no_message_when_plotly_loads(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    labelled = add_text_repel(fig, [1], [1], ["a"])
+    target = tmp_path / "host.html"
+    target.write_text(
+        f"<!doctype html><body>{labelled._iframe_html(True, {})}</body>",
+        encoding="utf-8",
+    )
+    page.goto(target.as_uri())
+    body = page.frame_locator("iframe").locator("body")
+    body.locator(".annotation-text").first.wait_for(timeout=15000)
+    assert "could not be loaded" not in body.inner_text()
+
+
+def test_missing_global_plotly_warns_instead_of_failing(page, tmp_path):
+    messages = collect_warnings(page)
+    fig = go.Figure(go.Scatter(x=[1, 2, 3], y=[1, 2, 3], mode="markers"))
+    render(page, add_text_repel(fig, [1, 2, 3], [1, 2, 3], list("abc")), tmp_path)
+    page.evaluate(f"""() => {{
+      const plotly = window.Plotly;
+      delete window.Plotly;
+      return plotly.relayout({GD}, {{'xaxis.range': [0.8, 2.6]}});
+    }}""")
+    page.wait_for_timeout(400)
+    assert [m for m in messages if "does not expose Plotly" in m]
+    assert page.console_errors == []

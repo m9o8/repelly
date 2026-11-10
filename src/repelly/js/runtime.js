@@ -575,6 +575,13 @@
 
   function run(gd, state, exact) {
     if (state.applying) return state.promise;
+    if (!root.Plotly) {
+      if (!state.warnedNoPlotly) {
+        state.warnedNoPlotly = true;
+        console.warn('repelly: cannot place labels because this page does not expose Plotly.');
+      }
+      return Promise.resolve();
+    }
     var cfg = getConfig(gd);
     if (!cfg || !gd._fullLayout) return Promise.resolve();
 

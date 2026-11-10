@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -284,6 +285,7 @@ def test_runtime_version_matches_package():
 
 
 def test_combined_notebook_renderers_draw_once(base, monkeypatch):
+    monkeypatch.setenv("VSCODE_PID", "1")
     monkeypatch.setattr(pio.renderers, "default", "plotly_mimetype+notebook")
     shown = []
     monkeypatch.setattr(pio, "show", lambda *args, **kwargs: shown.append("pio"))
@@ -417,3 +419,76 @@ def test_initial_time_budget_is_stored_and_validated(base):
     assert layer(custom)["solver"]["initial_max_time_ms"] == 90
     with pytest.raises(ValueError, match="initial_max_time_ms"):
         add_text_repel(base, [1], [2], ["a"], initial_max_time_ms=-1)
+
+
+@pytest.fixture
+def outside_vscode(monkeypatch):
+    for name in [name for name in os.environ if name.startswith("VSCODE_")]:
+        monkeypatch.delenv(name)
+
+
+def capture_display(monkeypatch):
+    shown = []
+    monkeypatch.setattr(
+        "IPython.display.display", lambda data, **kwargs: shown.append(data)
+    )
+    return shown
+
+
+@pytest.mark.parametrize(
+    "renderer", ["plotly_mimetype", "jupyterlab", "plotly_mimetype+notebook"]
+)
+def test_jupyterlab_uses_native_plotly_and_a_script(
+    base, monkeypatch, outside_vscode, renderer
+):
+    monkeypatch.setattr(pio.renderers, "default", renderer)
+    monkeypatch.setattr(pio, "show", lambda *a, **k: pytest.fail("HTML renderer ran"))
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert len(shown) == 2
+    assert "application/vnd.plotly.v1+json" in shown[0]
+    script = shown[1]["text/html"]
+    assert script.startswith("<script>") and "autoAttach" in script
+    assert "iframe" not in script[:20]
+    assert len(script) < 100_000
+
+
+def test_native_output_needs_no_plotly_copy(base, monkeypatch, outside_vscode):
+    monkeypatch.setattr(pio.renderers, "default", "plotly_mimetype")
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert "cdn.plot.ly" not in shown[1]["text/html"]
+
+
+def test_native_script_keeps_license_notice(base, monkeypatch, outside_vscode):
+    monkeypatch.setattr(pio.renderers, "default", "plotly_mimetype")
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert "GPL-3.0-or-later" in shown[1]["text/html"]
+
+
+@pytest.mark.parametrize("renderer", ["vscode", "nteract"])
+def test_other_frontends_keep_the_iframe(base, monkeypatch, outside_vscode, renderer):
+    monkeypatch.setattr(pio.renderers, "default", renderer)
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert len(shown) == 1
+    assert shown[0]["text/html"].startswith("<iframe srcdoc=")
+
+
+def test_vscode_keeps_the_iframe_even_with_the_generic_renderer(base, monkeypatch):
+    monkeypatch.setenv("VSCODE_PID", "1")
+    monkeypatch.setattr(pio.renderers, "default", "plotly_mimetype")
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show()
+    assert len(shown) == 1
+    assert shown[0]["text/html"].startswith("<iframe srcdoc=")
+    assert "cdn.plot.ly" in shown[0]["text/html"]
+
+
+def test_vscode_can_still_embed_on_request(base, monkeypatch):
+    monkeypatch.setenv("VSCODE_PID", "1")
+    monkeypatch.setattr(pio.renderers, "default", "vscode")
+    shown = capture_display(monkeypatch)
+    add_text_repel(base, [1], [2], ["a"]).show(include_plotlyjs=False)
+    assert "cdn.plot.ly" not in shown[0]["text/html"]
