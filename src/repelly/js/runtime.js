@@ -232,8 +232,7 @@
               y0: ya._offset,
               y1: ya._offset + ya._length
             },
-            entries: [],
-            maxLabels: Infinity
+            entries: []
           };
         }
 
@@ -263,6 +262,7 @@
             width: size.width + chrome + 2 * solver.box_padding,
             height: size.height + chrome + 2 * solver.box_padding,
             priority: at(layer.priority, i),
+            maxOverlaps: solver.max_overlaps == null ? Infinity : solver.max_overlaps,
             direction: solver.direction,
             pull: solver.force_pull,
             push: solver.force,
@@ -272,7 +272,6 @@
             startDy: warm ? warm[1] : undefined
           }
         });
-        if (solver.max_labels != null) panel.maxLabels = Math.min(panel.maxLabels, solver.max_labels);
       }
     });
 
@@ -287,33 +286,45 @@
     return { panels: panels, obstacles: obstacles };
   }
 
-  function limitToTop(entries, count) {
-    if (!Number.isFinite(count) || entries.length <= count) return entries;
-    return entries
-      .map(function (entry, index) { return { entry: entry, index: index }; })
-      .sort(function (a, b) {
+  // Applies each call's max_labels to that call's labels in this panel.
+  function limitPerLayer(entries) {
+    var byLayer = new Map();
+    entries.forEach(function (entry, index) {
+      if (!byLayer.has(entry.layer)) byLayer.set(entry.layer, []);
+      byLayer.get(entry.layer).push({ entry: entry, index: index });
+    });
+
+    var kept = [];
+    byLayer.forEach(function (items, layer) {
+      var limit = layer.solver.max_labels;
+      if (limit == null || items.length <= limit) {
+        kept = kept.concat(items);
+        return;
+      }
+      kept = kept.concat(items.slice().sort(function (a, b) {
         var pa = Number.isFinite(a.entry.spec.priority) ? a.entry.spec.priority : 0;
         var pb = Number.isFinite(b.entry.spec.priority) ? b.entry.spec.priority : 0;
         return pb - pa || a.index - b.index;
-      })
-      .slice(0, count)
+      }).slice(0, limit));
+    });
+    return kept
       .sort(function (a, b) { return a.index - b.index; })
       .map(function (item) { return item.entry; });
   }
 
+  // Calls sharing a panel are solved together, so these limits apply to the
+  // whole solve: the most generous iteration and time limits win.
   function solveOptions(entries, exact) {
     var iter = 0;
     var time = 0;
-    var overlaps = -Infinity;
     var seed = null;
     entries.forEach(function (entry) {
       var solver = entry.layer.solver;
       iter = Math.max(iter, solver.max_iter);
       time = Math.max(time, solver.max_time_ms);
-      overlaps = Math.max(overlaps, solver.max_overlaps == null ? Infinity : solver.max_overlaps);
       if (seed == null) seed = solver.seed;
     });
-    return { maxIter: iter, maxTimeMs: exact ? Infinity : time, maxOverlaps: overlaps, seed: seed };
+    return { maxIter: iter, maxTimeMs: exact ? Infinity : time, seed: seed };
   }
 
   function buildAnnotation(entry, x, y, radius) {
@@ -362,7 +373,7 @@
 
     Object.keys(collected.panels).sort().forEach(function (key) {
       var panel = collected.panels[key];
-      var entries = limitToTop(panel.entries, panel.maxLabels);
+      var entries = limitPerLayer(panel.entries);
       if (!entries.length) return;
 
       var result = Solver.solve({

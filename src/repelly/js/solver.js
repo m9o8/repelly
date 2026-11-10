@@ -96,27 +96,27 @@
     return order;
   }
 
-  // Drops labels that would start on top of more than `maxOverlaps` higher
-  // priority labels, mirroring the crowding limit in ggrepel.
-  function cullCrowded(labels, order, maxOverlaps) {
+  // Drops labels that would start on top of more than their allowed number of
+  // higher priority labels, mirroring the crowding limit in ggrepel. A label's
+  // own `maxOverlaps` takes precedence over the solver-wide default.
+  function cullCrowded(labels, order, defaultLimit) {
     var kept = new Uint8Array(labels.length);
-    if (!Number.isFinite(maxOverlaps)) {
-      kept.fill(1);
-      return kept;
-    }
     var placed = [];
     for (var o = 0; o < order.length; o++) {
       var i = order[o];
       var a = labels[i];
+      var limit = a.maxOverlaps == null ? defaultLimit : a.maxOverlaps;
       var count = 0;
-      for (var p = 0; p < placed.length && count <= maxOverlaps; p++) {
-        var b = labels[placed[p]];
-        if (Math.abs(a.x - b.x) * 2 < a.width + b.width &&
-            Math.abs(a.y - b.y) * 2 < a.height + b.height) {
-          count++;
+      if (Number.isFinite(limit)) {
+        for (var p = 0; p < placed.length && count <= limit; p++) {
+          var b = labels[placed[p]];
+          if (Math.abs(a.x - b.x) * 2 < a.width + b.width &&
+              Math.abs(a.y - b.y) * 2 < a.height + b.height) {
+            count++;
+          }
         }
       }
-      if (count <= maxOverlaps) {
+      if (count <= limit) {
         kept[i] = 1;
         placed.push(i);
       }

@@ -113,14 +113,16 @@ def add_text_repel(
     direction:
         Axes labels may move along: ``"both"``, ``"x"`` or ``"y"``.
     max_iter, max_time_ms:
-        Iteration and time limits for one solve.
+        Iteration and time limits for one solve. Calls sharing a subplot are
+        solved together, using the largest limits among them.
     max_overlaps:
         Drop a label that starts on top of more than this many higher-priority
-        labels. ``None`` keeps every label.
+        labels. ``None`` keeps every label. Applies to this call's labels.
     max_labels:
-        Show at most this many labels per subplot, by priority.
+        Show at most this many of this call's labels per subplot, by priority.
     seed:
-        Random seed, which makes placement reproducible.
+        Random seed, which makes placement reproducible. Calls sharing a
+        subplot use the seed of the first call.
     min_segment_length:
         Hide the connector when the label is closer than this many pixels.
     avoid_points:

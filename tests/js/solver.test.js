@@ -147,3 +147,13 @@ test('solves 500 labels within a reasonable time', () => {
   const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxTimeMs: 200 } });
   assert.ok(result.elapsedMs < 600, `took ${result.elapsedMs}ms`);
 });
+
+test('maxOverlaps can differ per label', () => {
+  const labels = [
+    label(400, 300, { priority: 3, maxOverlaps: Infinity }),
+    label(400, 300, { priority: 2, maxOverlaps: 0 }),
+    label(400, 300, { priority: 1, maxOverlaps: Infinity }),
+  ];
+  const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxOverlaps: 0 } });
+  assert.deepStrictEqual(Array.from(result.kept), [1, 0, 1]);
+});
