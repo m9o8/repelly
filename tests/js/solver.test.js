@@ -311,6 +311,8 @@ test('obstacles are found wherever they lie', () => {
   assert.deepStrictEqual(Array.from(result.overlapsPoint), [0, 0]);
 });
 
+// A rescue looks a few rings beyond the first free spot for one whose leader
+// crosses nothing, which keeps this to a handful across all 32 layouts.
 test('rescued labels prefer spots whose leader lines cross nothing', () => {
   let crossings = 0;
   for (let seed = 1; seed <= 32; seed++) {
@@ -319,5 +321,5 @@ test('rescued labels prefer spots whose leader lines cross nothing', () => {
     crossings += crossingPairs(labels, result);
     assert.strictEqual(overlappingPairs(labels, result), 0);
   }
-  assert.ok(crossings <= 40, `found ${crossings} crossings`);
+  assert.ok(crossings <= 10, `found ${crossings} crossings`);
 });

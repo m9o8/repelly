@@ -25,6 +25,7 @@
   var POLISH_SWEEPS = 60;
   var RING_COUNT = 10;
   var RING_ANGLES = 16;
+  var RESCUE_EXTRA_RINGS = 4;
   var UNTANGLE_LIMIT = 400;
   var UNTANGLE_EVERY = 5;
   var UNTANGLE_UNTIL = 0.7;
@@ -500,8 +501,11 @@
       var stepX = hw[i] * 0.75 + 4;
       var stepY = hh[i] * 1.25 + 4;
       var start = Math.atan2(py[i] - ty[i], px[i] - tx[i]);
-      for (var ring = 1; ring <= RING_COUNT; ring++) {
-        var bestX = 0, bestY = 0, bestCross = Infinity;
+      // Rings are searched outwards. Once one has a free spot, up to
+      // RESCUE_EXTRA_RINGS further rings are tried for a spot whose leader
+      // crosses nothing; failing that, the free spot with fewest crossings wins.
+      var bestX = 0, bestY = 0, bestCross = Infinity, lastRing = RING_COUNT;
+      for (var ring = 1; ring <= lastRing; ring++) {
         for (var t = 0; t < RING_ANGLES; t++) {
           // 0, +1, -1, +2, -2, ... steps away from the starting angle.
           var step = (t + 1) >> 1;
@@ -509,6 +513,7 @@
           var x = tx[i] + (moveX[i] ? Math.cos(theta) * (hw[i] + ring * stepX) : 0);
           var y = ty[i] + (moveY[i] ? Math.sin(theta) * (hh[i] + ring * stepY) : 0);
           if (!fitsAt(i, x, y, -1)) continue;
+          if (bestCross === Infinity) lastRing = Math.min(RING_COUNT, ring + RESCUE_EXTRA_RINGS);
           var crossings = crossingsAt(i, x, y);
           if (crossings < bestCross) {
             bestCross = crossings;
@@ -517,11 +522,12 @@
             if (crossings === 0) break;
           }
         }
-        if (bestCross < Infinity) {
-          px[i] = bestX;
-          py[i] = bestY;
-          return true;
-        }
+        if (bestCross === 0) break;
+      }
+      if (bestCross < Infinity) {
+        px[i] = bestX;
+        py[i] = bestY;
+        return true;
       }
       return false;
     }
