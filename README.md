@@ -118,7 +118,9 @@ fires when labels are placed.
 
 ### Streamlit
 
-Call `init` in each run of the script, then use `st.plotly_chart` as normal:
+`st.plotly_chart` sends only the figure, not the script that places the labels, so
+`init` adds that script to the page. Call it in each run of the script, then use
+`st.plotly_chart` as normal:
 
 ```python
 import streamlit as st
