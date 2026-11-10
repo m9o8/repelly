@@ -375,22 +375,30 @@
           y - hh[i] < area.y0 || y + hh[i] > area.y1) {
         return false;
       }
+      return !touchesLabel(i, x, y, ignore) && !touchesPoint(i, x, y);
+    }
+
+    function touchesLabel(i, x, y, ignore) {
       for (var c = 0; c < m; c++) {
         var j = active[c];
         if (j === i || j === ignore) continue;
-        if (Math.abs(x - px[j]) < hw[i] + hw[j] && Math.abs(y - py[j]) < hh[i] + hh[j]) return false;
+        if (Math.abs(x - px[j]) < hw[i] + hw[j] && Math.abs(y - py[j]) < hh[i] + hh[j]) return true;
       }
-      var clear = true;
+      return false;
+    }
+
+    function touchesPoint(i, x, y) {
+      var touching = false;
       var pad = labels[i].pointPadding || 0;
       grid.query(x - hw[i], y - hh[i], x + hw[i], y + hh[i], pad, function (k) {
         var r = grid.r[k] + pad;
         if (Math.abs(x - grid.x[k]) < hw[i] + r && Math.abs(y - grid.y[k]) < hh[i] + r) {
-          clear = false;
+          touching = true;
           return true;
         }
         return false;
       });
-      return clear;
+      return touching;
     }
 
     function isColliding(i) {
@@ -483,8 +491,14 @@
     }
 
     var colliding = new Uint8Array(n);
+    var overlapsLabel = new Uint8Array(n);
+    var overlapsPoint = new Uint8Array(n);
     for (var f = 0; f < m; f++) {
-      if (isColliding(active[f])) colliding[active[f]] = 1;
+      var final = active[f];
+      if (!isColliding(final)) continue;
+      colliding[final] = 1;
+      overlapsLabel[final] = touchesLabel(final, px[final], py[final], -1) ? 1 : 0;
+      overlapsPoint[final] = touchesPoint(final, px[final], py[final]) ? 1 : 0;
     }
 
     return {
@@ -492,6 +506,8 @@
       y: py,
       kept: kept,
       colliding: colliding,
+      overlapsLabel: overlapsLabel,
+      overlapsPoint: overlapsPoint,
       sweeps: sweeps,
       elapsedMs: clock() - started
     };
