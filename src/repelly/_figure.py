@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import os
 from typing import Any
 
 import plotly.graph_objects as go
@@ -21,10 +22,21 @@ from plotly.io._base_renderers import (
     PlotlyRenderer,
 )
 
-from repelly._runtime import merge_post_script
+from repelly._runtime import merge_post_script, runtime_js
 
 _DEFAULT_IFRAME_HEIGHT = 500
 _IFRAME_MARGIN = 20
+_NATIVE_RENDERERS = {"plotly_mimetype", "jupyterlab"}
+_PLOTLY_MISSING_SCRIPT = """<script>
+if (!window.Plotly) {
+  document.body.style.cssText =
+    "margin:0;padding:16px;font:14px/1.5 sans-serif;color:#52514e;background:#fcfcfb";
+  document.body.textContent =
+    "Plotly could not be loaded, so this chart cannot be shown. VS Code notebooks " +
+    "load Plotly from the internet. Reconnect and rerun the cell, or use " +
+    "fig.show(include_plotlyjs=True) to embed Plotly in this output (about 5 MB).";
+}
+</script>"""
 
 
 class RepelFigure(go.Figure):
@@ -72,9 +84,12 @@ class RepelFigure(go.Figure):
         if inline:
             from IPython.display import display
 
-            display(
-                {"text/html": self._iframe_html(include_plotlyjs, kwargs)}, raw=True
-            )
+            if _can_use_native_plotly(inline):
+                self._display_native(inline, display)
+            else:
+                display(
+                    {"text/html": self._iframe_html(include_plotlyjs, kwargs)}, raw=True
+                )
 
     def _ipython_display_(self) -> None:
         if pio.renderers.render_on_display and pio.renderers.default:
@@ -110,12 +125,23 @@ class RepelFigure(go.Figure):
             bundle["text/html"] = self._iframe_html("cdn", kwargs)
         return bundle
 
-    def _iframe_html(self, include_plotlyjs: Any, options: dict[str, Any]) -> str:
-        """Return a self-contained iframe, for frontends that run Plotly themselves.
+    def _display_native(self, renderers: list[str], display: Any) -> None:
+        """Show Plotly's own output and add only the repelly script beside it.
 
-        JupyterLab and VS Code draw Plotly's own mimetype without running custom
-        JavaScript, and may run inline scripts before a CDN script has loaded.
-        An iframe document has its own, ordinary script loading.
+        JupyterLab's Plotly renderer draws in the main page and exposes a global
+        Plotly, so this needs no copy of Plotly and works offline.
+        """
+        bundle = pio.renderers._build_mime_bundle(self.to_dict(), "+".join(renderers))
+        display(bundle, raw=True)
+        script = f"<script>{runtime_js()}\nwindow.repelly.autoAttach();</script>"
+        display({"text/html": script}, raw=True)
+
+    def _iframe_html(self, include_plotlyjs: Any, options: dict[str, Any]) -> str:
+        """Return a self-contained iframe, for frontends that hide Plotly from scripts.
+
+        VS Code draws Plotly's mimetype without exposing Plotly, and may run inline
+        scripts before a CDN script has loaded. An iframe document has its own,
+        ordinary script loading.
         """
         page = self.to_html(
             full_html=True,
@@ -124,6 +150,8 @@ class RepelFigure(go.Figure):
             default_width=options.get("default_width", "100%"),
             default_height=options.get("default_height", "100%"),
         )
+        before, closing, after = page.rpartition("</body>")
+        page = f"{before}{_PLOTLY_MISSING_SCRIPT}{closing}{after}"
         height = (self.layout.height or _DEFAULT_IFRAME_HEIGHT) + _IFRAME_MARGIN
         return (
             f'<iframe srcdoc="{html.escape(page, quote=True)}" width="100%" '
@@ -151,6 +179,12 @@ def _bake_for_display(fig: RepelFigure, options: dict[str, Any]) -> go.Figure:
     from repelly._static import bake
 
     return bake(fig, width=options.get("width"), height=options.get("height"))
+
+
+def _can_use_native_plotly(renderers: list[str]) -> bool:
+    """Return whether the frontend is known to expose a global Plotly to scripts."""
+    in_vscode = any(name.startswith("VSCODE_") for name in os.environ)
+    return not in_vscode and set(renderers) <= _NATIVE_RENDERERS
 
 
 def _split_renderers(renderer: str | None) -> tuple[list[str], list[str], list[str]]:
