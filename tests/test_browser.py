@@ -631,3 +631,65 @@ def test_bake_keeps_nudges(chrome_path):
     labelled = add_text_repel(fig, [1], [1], ["a"], nudge_x=90)
     baked = bake(labelled, width=800, height=500)
     assert baked.layout.annotations[0].ax == pytest.approx(90, abs=3)
+
+
+CROWDED = {"x": [1.0] * 12, "y": [1.0] * 12, "text": [f"label-{i}" for i in range(12)]}
+
+
+def collect_warnings(page):
+    messages = []
+    page.on(
+        "console",
+        lambda m: messages.append(m.text) if m.type == "warning" else None,
+    )
+    return messages
+
+
+def test_dropped_labels_are_reported_in_the_console(page, tmp_path):
+    messages = collect_warnings(page)
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    render(page, add_text_repel(fig, **CROWDED, max_overlaps=1), tmp_path)
+    assert [m for m in messages if "10 labels hidden" in m and "max_overlaps" in m]
+
+
+def test_no_warning_when_everything_fits(page, tmp_path):
+    messages = collect_warnings(page)
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    render(page, add_text_repel(fig, [1, 2], [1, 2], ["a", "b"]), tmp_path)
+    assert not [m for m in messages if "repelly" in m]
+
+
+def test_repeated_solves_do_not_repeat_the_warning(page, tmp_path):
+    messages = collect_warnings(page)
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    render(page, add_text_repel(fig, **CROWDED, max_overlaps=1), tmp_path)
+    for upper in (1.9, 1.8, 1.7):
+        page.evaluate(f"() => Plotly.relayout({GD}, {{'xaxis.range': [0, {upper}]}})")
+        page.wait_for_timeout(250)
+        wait_settled(page)
+    assert len([m for m in messages if "labels hidden" in m]) == 1
+
+
+def test_labels_that_cannot_separate_are_reported(page, tmp_path):
+    messages = collect_warnings(page)
+    n = 60
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    fig.update_layout(width=320, height=260)
+    result = add_text_repel(
+        fig, [1.0] * n, [1.0] * n, ["a-long-label"] * n, max_overlaps=None
+    )
+    render(page, result, tmp_path)
+    assert [m for m in messages if "labels still overlap" in m]
+
+
+def test_bake_warns_about_dropped_labels(chrome_path):
+    fig = go.Figure(go.Scatter(x=[0, 2], y=[0, 2], mode="markers"))
+    labelled = add_text_repel(fig, **CROWDED, max_overlaps=1)
+    with pytest.warns(UserWarning, match="hid 10 labels"):
+        bake(labelled, width=700, height=500)
+
+
+def test_bake_is_quiet_when_everything_fits(chrome_path, recwarn):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    bake(add_text_repel(fig, [1, 2], [1, 2], ["a", "b"]), width=700, height=500)
+    assert not [w for w in recwarn if "repelly" in str(w.message)]

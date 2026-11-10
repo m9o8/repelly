@@ -155,6 +155,12 @@ fixed, if you need one to pass elsewhere.
 | `font`, `segment` | Plotly defaults | Styling; `segment` takes `color`, `width`, `arrowhead`, `arrowsize` |
 | `on` | all events | Re-solve on any of `"zoom"`, `"resize"`, `"frame"`; the first render always solves |
 
+## Diagnostics
+
+Labels that are hidden by `max_overlaps`, or that still overlap after solving, are
+reported with a warning in the browser console. `bake`, `to_image` and `write_image`
+raise the same information as a Python warning.
+
 ## Limitations
 
 - Only cartesian `scatter` and `scattergl` traces can be labelled from traces.
