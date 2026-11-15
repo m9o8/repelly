@@ -26,6 +26,7 @@ SCHEMA_VERSION = 1
 EVENTS = ("render", "zoom", "resize", "frame")
 SUPPORTED_TRACES = ("scatter", "scattergl")
 DIRECTIONS = ("both", "x", "y")
+ALIGNMENTS = ("left", "center", "right")
 TRACE_COLOR = "trace"
 
 _DEFAULT_SEGMENT = {"color": "rgba(90,90,90,0.7)", "width": 1}
@@ -73,6 +74,7 @@ def add_text_repel(
     drop_unresolved: bool = False,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
+    align: str = "center",
     on: str | Iterable[str] | None = None,
 ) -> RepelFigure:
     """Return a copy of ``fig`` with repelling text labels added.
@@ -160,6 +162,9 @@ def add_text_repel(
         Plotly annotation font, for example ``{"size": 13, "color": "navy"}``.
     segment:
         Connector style: ``color``, ``width``, ``arrowhead``, ``arrowsize``.
+    align:
+        How the lines of a multi-line label line up: ``"left"``, ``"center"``
+        or ``"right"``. Lines are separated with ``<br>`` in the text.
     on:
         Events that re-solve the labels: any of ``"render"``, ``"zoom"``,
         ``"resize"``, ``"frame"``. This applies to the whole figure, not just
@@ -207,6 +212,7 @@ def add_label_repel(
     drop_unresolved: bool = False,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
+    align: str = "center",
     on: str | Iterable[str] | None = None,
 ) -> RepelFigure:
     """Like :func:`add_text_repel`, with labels drawn on a filled box.
@@ -265,6 +271,7 @@ def _add_layer(
     ylim: Any,
     font: Mapping[str, Any] | None,
     segment: Mapping[str, Any] | None,
+    align: str,
     on: str | Iterable[str] | None,
     **solver: Any,
 ) -> RepelFigure:
@@ -275,6 +282,8 @@ def _add_layer(
         raise ValueError("pass both x and y, or neither to label existing traces")
 
     events = None if on is None else _validate_events(on)
+    if align not in ALIGNMENTS:
+        raise ValueError(f"align must be 'left', 'center' or 'right', got {align!r}")
     solver = _validate_solver(solver)
     limits = {
         "xlim": _validate_limit(xlim, "xlim"),
@@ -311,6 +320,8 @@ def _add_layer(
         )
 
     layer = _build_layer(_drop_unlabelled(columns), label, font, segment, solver)
+    if align != "center":
+        layer["align"] = align
     layer.update({key: value for key, value in limits.items() if value is not None})
     _store_layer(result, layer, events)
     return result

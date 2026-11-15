@@ -439,6 +439,7 @@
       arrowcolor: showSegment ? (segment.color || 'rgba(90,90,90,0.7)') : 'rgba(0,0,0,0)',
       standoff: radius
     };
+    if (layer.align) annotation.align = layer.align;
     if (layer.font || entry.color) {
       annotation.font = Object.assign({}, layer.font, entry.color ? { color: entry.color } : null);
     }

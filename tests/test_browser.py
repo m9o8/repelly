@@ -374,6 +374,20 @@ def test_line_end_labels_follow_the_readme(page, tmp_path):
     assert page.console_errors == []
 
 
+def test_align_reaches_the_drawn_label(page, tmp_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    labelled = add_label_repel(
+        fig, [1, 2], [1, 2], ["short<br>much longer line", "b"], align="right"
+    )
+    render(page, labelled, tmp_path)
+    aligns = page.evaluate(
+        f"""() => {GD}._fullLayout.annotations
+          .filter(a => a.name.startsWith('repelly-')).map(a => a.align)"""
+    )
+    assert aligns == ["right", "right"]
+    assert page.console_errors == []
+
+
 def test_many_labels_finish_quickly(page, tmp_path):
     n = 400
     xs = [i % 20 for i in range(n)]
