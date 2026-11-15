@@ -14,6 +14,7 @@ import re
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import pytest
 from plotly.subplots import make_subplots
 
@@ -383,6 +384,14 @@ def test_write_image_produces_png(chrome_path, tmp_path):
     target = tmp_path / "plot.png"
     add_text_repel(fig, xs, ys, names).write_image(target, width=600, height=400)
     assert target.read_bytes().startswith(b"\x89PNG")
+
+
+def test_bake_fixes_the_size_it_solved_for(chrome_path, monkeypatch):
+    monkeypatch.setattr(pio.defaults, "default_width", 900)
+    monkeypatch.setattr(pio.defaults, "default_height", 350)
+    fig, xs, ys, names = dense_figure(6)
+    baked = bake(add_text_repel(fig, xs, ys, names))
+    assert (baked.layout.width, baked.layout.height) == (900, 350)
 
 
 def test_plain_figure_is_returned_by_bake_without_labels(chrome_path):
