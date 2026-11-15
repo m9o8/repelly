@@ -18,7 +18,8 @@ import plotly.io as pio
 import pytest
 from plotly.subplots import make_subplots
 
-from repelly import add_label_repel, add_text_repel, bake
+from repelly import __version__, add_label_repel, add_text_repel, bake
+from repelly._runtime import runtime_js
 
 pytestmark = pytest.mark.browser
 
@@ -963,3 +964,72 @@ def test_editable_plots_still_relayout_labels(page, tmp_path):
     after = {a["name"]: (a["ax"], a["ay"]) for a in ours(page)}
     assert after != before
     assert page.evaluate("() => window.__labelRelayouts") >= 1
+
+
+def runtime_as(version):
+    """The runtime script, posing as another release, attached to the plot."""
+    source = runtime_js().replace(
+        f"var VERSION = '{__version__}'", f"var VERSION = '{version}'"
+    )
+    return f"{source}\nwindow.repelly.autoAttach();"
+
+
+def render_with_runtimes(page, fig, tmp_path, scripts):
+    target = tmp_path / "plot.html"
+    go.Figure(fig).write_html(target, include_plotlyjs=True, post_script=scripts)
+    page.goto(target.as_uri())
+    wait_settled(page)
+
+
+def test_newer_runtime_takes_over_from_an_older_one(page, tmp_path):
+    fig, xs, ys, names = dense_figure(6)
+    keep_old = f"window.__oldState = {GD}.__repelly;"
+    render_with_runtimes(
+        page,
+        add_text_repel(fig, xs, ys, names),
+        tmp_path,
+        [runtime_as("0.0.1"), keep_old, runtime_as(__version__)],
+    )
+    assert page.evaluate("() => window.repelly.version") == __version__
+    assert page.evaluate(f"() => {GD}.__repelly.version") == __version__
+    assert page.evaluate("() => window.__repellyObserver.repellyVersion") == __version__
+    old = page.evaluate("() => [window.__oldState.retired, window.__oldState.applying]")
+    assert old == [True, True]
+    # The retired state stays retired even when code assigns to it.
+    page.evaluate("() => { window.__oldState.applying = false; }")
+    assert page.evaluate("() => window.__oldState.applying") is True
+
+    page.evaluate(f"() => Plotly.relayout({GD}, {{'xaxis.range': [0.95, 1.2]}})")
+    wait_settled(page)
+    assert page.evaluate(COUNT_OURS) > 0
+    assert page.console_errors == []
+
+
+def test_older_runtime_does_not_replace_a_newer_one(page, tmp_path):
+    fig, xs, ys, names = dense_figure(6)
+    render_with_runtimes(
+        page,
+        add_text_repel(fig, xs, ys, names),
+        tmp_path,
+        [runtime_as(__version__), runtime_as("0.0.1")],
+    )
+    assert page.evaluate("() => window.repelly.version") == __version__
+    assert page.evaluate(f"() => {GD}.__repelly.version") == __version__
+    assert page.console_errors == []
+
+
+def test_labels_are_solved_again_when_fonts_load(page, tmp_path):
+    fig, xs, ys, names = dense_figure(6)
+    render(page, add_text_repel(fig, xs, ys, names), tmp_path)
+    page.evaluate(
+        """() => {
+          const solver = window.__repellySolver;
+          const solve = solver.solve;
+          window.__solves = 0;
+          solver.solve = (input) => { window.__solves++; return solve(input); };
+          document.fonts.dispatchEvent(new Event('loadingdone'));
+        }"""
+    )
+    page.wait_for_function("() => window.__solves > 0", timeout=5000)
+    wait_settled(page)
+    assert page.console_errors == []
