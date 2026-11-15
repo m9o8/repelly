@@ -10,8 +10,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import json
 import os
+from importlib import resources
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +26,7 @@ from plotly.subplots import make_subplots
 
 import repelly
 from repelly import RepelFigure, add_label_repel, add_text_repel, as_repel_figure
+from repelly._api import EVENTS
 
 
 def config(fig):
@@ -60,6 +63,28 @@ def test_layers_accumulate(base):
     assert [entry["text"] for entry in config(result)["layers"]] == [["a"], ["b"]]
     assert "label" in layer(result, 1)
     assert "label" not in layer(result, 0)
+
+
+def test_events_apply_to_the_whole_figure(base):
+    first = add_text_repel(base, [1], [2], ["a"])
+    assert config(first)["on"] == sorted(EVENTS)
+    narrowed = add_text_repel(first, [1], [2], ["b"], on=["render"])
+    assert config(narrowed)["on"] == ["render"]
+    kept = add_text_repel(narrowed, [1], [2], ["c"])
+    assert config(kept)["on"] == ["render"]
+
+
+def test_label_repel_takes_the_same_parameters_as_text_repel():
+    text = inspect.signature(add_text_repel).parameters
+    label = dict(inspect.signature(add_label_repel).parameters)
+    assert label.pop("label").kind is inspect.Parameter.KEYWORD_ONLY
+    assert [(p.name, p.kind, p.default, p.annotation) for p in label.values()] == [
+        (p.name, p.kind, p.default, p.annotation) for p in text.values()
+    ]
+
+
+def test_package_ships_type_information():
+    assert (resources.files("repelly") / "py.typed").is_file()
 
 
 def test_keeps_existing_meta_dict(base):

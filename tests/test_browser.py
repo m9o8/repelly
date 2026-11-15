@@ -346,6 +346,34 @@ def test_scattergl_points_are_avoided(page, tmp_path):
     assert page.console_errors == []
 
 
+def test_line_end_labels_follow_the_readme(page, tmp_path):
+    frame = px.data.stocks().melt(id_vars="date", var_name="ticker")
+    frame["date"] = pd.to_datetime(frame["date"])
+    fig = px.line(frame, x="date", y="value", color="ticker")
+    last = frame["date"].max()
+    fig.update_xaxes(range=[frame["date"].min(), last + pd.Timedelta(days=120)])
+    labelled = add_text_repel(
+        fig,
+        text=lambda trace: [""] * (len(trace.x) - 1) + [trace.name],
+        direction="y",
+        nudge_x=30,
+        xlim=(last, None),
+        color="trace",
+        max_overlaps=None,
+    )
+    render(page, labelled, tmp_path)
+    found = page.evaluate(
+        f"""() => {GD}.layout.annotations
+          .filter(a => a.name.startsWith('repelly-'))
+          .map(a => [a.text, a.font.color, a.ax])"""
+    )
+    colors = {trace.name: trace.line.color for trace in fig.data}
+    assert sorted(text for text, _, _ in found) == sorted(colors)
+    assert all(color == colors[text] for text, color, _ in found)
+    assert all(ax > 0 for _, _, ax in found)
+    assert page.console_errors == []
+
+
 def test_many_labels_finish_quickly(page, tmp_path):
     n = 400
     xs = [i % 20 for i in range(n)]

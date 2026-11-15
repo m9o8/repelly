@@ -92,6 +92,28 @@ fig = add_text_repel(fig, text=lambda trace: trace.customdata[:, 0])
 `text` defaults to each trace's `text`, then `hovertext`. Narrow the traces with
 `selector`, `row` and `col`.
 
+### Labels at line ends
+
+Label only the last point of each line: points with an empty label get none. Labels
+stay inside the plot area, so first make room right of the data. `xlim` keeps the
+labels in that gutter, `nudge_x` sets the gap in pixels, `direction="y"` lets labels
+move only up and down so they stack, and `color="trace"` matches each line:
+
+```python
+fig = px.line(df, x="date", y="value", color="ticker")
+last = df["date"].max()
+fig.update_xaxes(range=[df["date"].min(), last + pd.Timedelta(days=120)])
+fig = add_text_repel(
+    fig,
+    text=lambda trace: [""] * (len(trace.x) - 1) + [trace.name],
+    direction="y",
+    nudge_x=30,
+    xlim=(last, None),
+    color="trace",
+    max_overlaps=None,
+)
+```
+
 ### Subplots
 
 For explicit coordinates, choose the subplot with `row` and `col`, or `xref` and `yref`:
@@ -164,9 +186,9 @@ fixed, if you need one to pass elsewhere.
 | `row`, `col`, `secondary_y`, `xref`, `yref` | primary axes | Target subplot for explicit `x` and `y` |
 | `selector` | all traces | Which traces to label when `x` and `y` are omitted |
 | `priority` | none | Higher values survive culling first |
-| `visible` | all | Boolean mask; hidden points still repel other labels |
+| `visible` | all | Boolean mask; a hidden label's point still keeps others away if it is drawn as a marker |
 | `frame` | none | Animation frame name per label, for explicit `x` and `y` |
-| `force` | `1.0` | Separation strength, effective range 0.05 to 1 |
+| `force` | `1.0` | Separation strength; each overlapping pair uses the average of its two values, limited to 0.05 to 1 |
 | `force_pull` | `1.0` | Pull back towards the anchor |
 | `box_padding`, `point_padding` | `2`, `2` | Gaps in pixels |
 | `direction` | `"both"` | Restrict movement to `"x"` or `"y"`; one value or one per label |
@@ -182,7 +204,7 @@ fixed, if you need one to pass elsewhere.
 | `avoid_points` | `True` | Keep labels off every marker in the subplot |
 | `drop_unresolved` | `False` | Hide labels that still overlap after solving |
 | `font`, `segment` | Plotly defaults | Styling; `segment` takes `color`, `width`, `arrowhead`, `arrowsize` |
-| `on` | all events | Re-solve on any of `"zoom"`, `"resize"`, `"frame"`; the first render always solves |
+| `on` | all events | Re-solve on any of `"render"`, `"zoom"`, `"resize"`, `"frame"`; applies to the whole figure, and `None` keeps what an earlier call set; the first render always solves |
 
 ## Diagnostics
 
