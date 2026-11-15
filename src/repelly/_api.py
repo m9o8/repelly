@@ -73,7 +73,7 @@ def add_text_repel(
     drop_unresolved: bool = False,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
-    on: str | Iterable[str] = EVENTS,
+    on: str | Iterable[str] | None = None,
 ) -> RepelFigure:
     """Return a copy of ``fig`` with repelling text labels added.
 
@@ -110,10 +110,12 @@ def add_text_repel(
         Higher values are kept first when labels are culled. A sequence, or in
         from-traces mode a function of the trace.
     visible:
-        Boolean mask of labels to show. Hidden points still repel other labels.
-        A sequence, or in from-traces mode a function of the trace.
+        Boolean mask of labels to show. A hidden label's point still keeps
+        other labels away if it is drawn as a marker (see ``avoid_points``). A
+        sequence, or in from-traces mode a function of the trace.
     force:
-        How strongly overlapping labels separate, from 0.05 up to 1.
+        How strongly overlapping labels separate. Each overlapping pair uses
+        the average of its two labels' values, limited to 0.05 to 1.
     force_pull:
         How strongly labels are drawn back towards their anchors.
     box_padding, point_padding:
@@ -159,47 +161,13 @@ def add_text_repel(
     segment:
         Connector style: ``color``, ``width``, ``arrowhead``, ``arrowsize``.
     on:
-        Events that re-solve: any of ``"render"``, ``"zoom"``, ``"resize"``,
-        ``"frame"``. The first render is always solved.
+        Events that re-solve the labels: any of ``"render"``, ``"zoom"``,
+        ``"resize"``, ``"frame"``. This applies to the whole figure, not just
+        this call's labels. ``None`` keeps what an earlier call set, or all
+        events on the first call; any other value replaces it. The first
+        render is always solved.
     """
-    return _add_layer(
-        fig,
-        x,
-        y,
-        text,
-        label=None,
-        row=row,
-        col=col,
-        secondary_y=secondary_y,
-        xref=xref,
-        yref=yref,
-        selector=selector,
-        frame=frame,
-        priority=priority,
-        visible=visible,
-        force=force,
-        force_pull=force_pull,
-        box_padding=box_padding,
-        point_padding=point_padding,
-        direction=direction,
-        color=color,
-        nudge_x=nudge_x,
-        nudge_y=nudge_y,
-        xlim=xlim,
-        ylim=ylim,
-        max_iter=max_iter,
-        max_time_ms=max_time_ms,
-        initial_max_time_ms=initial_max_time_ms,
-        max_overlaps=max_overlaps,
-        max_labels=max_labels,
-        seed=seed,
-        min_segment_length=min_segment_length,
-        avoid_points=avoid_points,
-        drop_unresolved=drop_unresolved,
-        font=font,
-        segment=segment,
-        on=on,
-    )
+    return _add_layer(**locals(), label=None)
 
 
 def add_label_repel(
@@ -209,27 +177,6 @@ def add_label_repel(
     text: Any = None,
     *,
     label: Mapping[str, Any] | None = None,
-    **kwargs: Any,
-) -> RepelFigure:
-    """Like :func:`add_text_repel`, with labels drawn on a filled box.
-
-    ``label`` overrides the box style with any of ``bgcolor``, ``bordercolor``,
-    ``borderwidth`` and ``borderpad``.
-    """
-    unknown = set(label or ()) - set(_DEFAULT_LABEL)
-    if unknown:
-        raise ValueError(f"unknown label style keys: {sorted(unknown)}")
-    style = {**_DEFAULT_LABEL, **dict(label or {})}
-    return _add_layer(fig, x, y, text, label=style, **kwargs)
-
-
-def _add_layer(
-    fig: go.Figure,
-    x: Any,
-    y: Any,
-    text: Any,
-    *,
-    label: Mapping[str, Any] | None,
     row: int | None = None,
     col: int | None = None,
     secondary_y: bool | None = None,
@@ -239,23 +186,95 @@ def _add_layer(
     frame: Any = None,
     priority: Any = None,
     visible: Any = None,
+    force: float = 1.0,
+    force_pull: float = 1.0,
+    box_padding: float = 2.0,
+    point_padding: float = 2.0,
     direction: Any = "both",
     color: Any = None,
     nudge_x: Any = 0.0,
     nudge_y: Any = 0.0,
     xlim: Any = None,
     ylim: Any = None,
+    max_iter: int = 400,
+    max_time_ms: float = 40.0,
+    initial_max_time_ms: float = 250.0,
+    max_overlaps: int | None = 10,
+    max_labels: int | None = None,
+    seed: int = 42,
+    min_segment_length: float = 6.0,
+    avoid_points: bool = True,
+    drop_unresolved: bool = False,
     font: Mapping[str, Any] | None = None,
     segment: Mapping[str, Any] | None = None,
-    on: str | Iterable[str] = EVENTS,
+    on: str | Iterable[str] | None = None,
+) -> RepelFigure:
+    """Like :func:`add_text_repel`, with labels drawn on a filled box.
+
+    ``label`` overrides the box style with any of ``bgcolor``, ``bordercolor``,
+    ``borderwidth`` and ``borderpad``. Every other parameter is as for
+    :func:`add_text_repel`.
+    """
+    options = dict(locals())
+    unknown = set(label or ()) - set(_DEFAULT_LABEL)
+    if unknown:
+        raise ValueError(f"unknown label style keys: {sorted(unknown)}")
+    options["label"] = {**_DEFAULT_LABEL, **dict(label or {})}
+    return _add_layer(**options)
+
+
+# Parameters handed to the browser solver as they are, after validation.
+_SOLVER_OPTIONS = (
+    "force",
+    "force_pull",
+    "box_padding",
+    "point_padding",
+    "max_iter",
+    "max_time_ms",
+    "initial_max_time_ms",
+    "max_overlaps",
+    "max_labels",
+    "seed",
+    "min_segment_length",
+    "avoid_points",
+    "drop_unresolved",
+)
+
+
+def _add_layer(
+    fig: go.Figure,
+    x: Any,
+    y: Any,
+    text: Any,
+    *,
+    label: Mapping[str, Any] | None,
+    row: int | None,
+    col: int | None,
+    secondary_y: bool | None,
+    xref: str | None,
+    yref: str | None,
+    selector: Any,
+    frame: Any,
+    priority: Any,
+    visible: Any,
+    direction: Any,
+    color: Any,
+    nudge_x: Any,
+    nudge_y: Any,
+    xlim: Any,
+    ylim: Any,
+    font: Mapping[str, Any] | None,
+    segment: Mapping[str, Any] | None,
+    on: str | Iterable[str] | None,
     **solver: Any,
 ) -> RepelFigure:
+    """Shared body of the public functions, which pass every parameter."""
     if not isinstance(fig, go.Figure):
         raise TypeError(f"fig must be a plotly Figure, got {type(fig).__name__}")
     if (x is None) != (y is None):
         raise ValueError("pass both x and y, or neither to label existing traces")
 
-    events = _validate_events(on)
+    events = None if on is None else _validate_events(on)
     solver = _validate_solver(solver)
     limits = {
         "xlim": _validate_limit(xlim, "xlim"),
@@ -306,25 +325,8 @@ def _validate_events(on: str | Iterable[str]) -> list[str]:
 
 
 def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
-    known = {
-        "force": 1.0,
-        "force_pull": 1.0,
-        "box_padding": 2.0,
-        "point_padding": 2.0,
-        "max_iter": 400,
-        "max_time_ms": 40.0,
-        "initial_max_time_ms": 250.0,
-        "max_overlaps": 10,
-        "max_labels": None,
-        "seed": 42,
-        "min_segment_length": 6.0,
-        "avoid_points": True,
-        "drop_unresolved": False,
-    }
-    unknown = set(solver) - set(known)
-    if unknown:
-        raise TypeError(f"unexpected keyword arguments: {sorted(unknown)}")
-    merged = {**known, **solver}
+    if set(solver) != set(_SOLVER_OPTIONS):
+        raise AssertionError(f"solver options out of sync: {sorted(solver)}")
 
     for name in (
         "force",
@@ -335,20 +337,20 @@ def _validate_solver(solver: dict[str, Any]) -> dict[str, Any]:
         "initial_max_time_ms",
         "min_segment_length",
     ):
-        value = merged[name]
+        value = solver[name]
         if not _is_real(value) or value < 0:
             raise ValueError(f"{name} must be a non-negative number")
-    if not isinstance(merged["max_iter"], numbers.Integral) or merged["max_iter"] < 1:
+    if not isinstance(solver["max_iter"], numbers.Integral) or solver["max_iter"] < 1:
         raise ValueError("max_iter must be a positive integer")
-    if not isinstance(merged["seed"], numbers.Integral):
+    if not isinstance(solver["seed"], numbers.Integral):
         raise ValueError("seed must be an integer")
     for name, minimum in (("max_overlaps", 0), ("max_labels", 1)):
-        value = merged[name]
+        value = solver[name]
         if value is not None and (
             not isinstance(value, numbers.Integral) or value < minimum
         ):
             raise ValueError(f"{name} must be None or an integer >= {minimum}")
-    return {key: _to_native(value) for key, value in merged.items()}
+    return {key: _to_native(solver[key]) for key in _SOLVER_OPTIONS}
 
 
 def _validate_limit(limit: Any, name: str) -> list[Any] | None:
@@ -813,7 +815,10 @@ def _build_layer(
     return layer
 
 
-def _store_layer(fig: RepelFigure, layer: dict[str, Any], events: list[str]) -> None:
+def _store_layer(
+    fig: RepelFigure, layer: dict[str, Any], events: list[str] | None
+) -> None:
+    """Add ``layer`` to the figure's config; ``events`` None keeps the current."""
     meta = fig.layout.meta
     if meta is None:
         meta = {}
@@ -825,11 +830,12 @@ def _store_layer(fig: RepelFigure, layer: dict[str, Any], events: list[str]) -> 
 
     existing = meta.get(META_KEY) or {}
     layers = [*existing.get("layers", []), layer]
-    merged_events = sorted(set(existing.get("on", [])) | set(events))
+    if events is None:
+        events = existing.get("on", list(EVENTS))
     config: dict[str, Any] = {
         "schema": SCHEMA_VERSION,
         "layers": layers,
-        "on": merged_events,
+        "on": sorted(set(events)),
     }
 
     frames = [frame.name for frame in (fig.frames or ())]
