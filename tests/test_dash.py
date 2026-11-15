@@ -15,12 +15,11 @@ import threading
 import plotly.graph_objects as go
 import pytest
 from dash import Dash, Input, Output, dcc, html
+from flask import Flask
 from werkzeug.serving import make_server
 
 import repelly.dash as repelly_dash
-from repelly import add_text_repel
-
-pytestmark = pytest.mark.browser
+from repelly import __version__, add_text_repel
 
 GD = "document.querySelector('#graph .js-plotly-plot')"
 LABELS = f"""() => {{
@@ -83,12 +82,14 @@ def wait_for_labels(page, expected):
     )
 
 
+@pytest.mark.browser
 def test_initial_figure_gets_labels(page, running_app):
     page.goto(running_app)
     wait_for_labels(page, ["first", "second"])
     assert page.console_errors == []
 
 
+@pytest.mark.browser
 def test_callback_update_replaces_labels(page, running_app):
     page.goto(running_app)
     wait_for_labels(page, ["first", "second"])
@@ -97,6 +98,7 @@ def test_callback_update_replaces_labels(page, running_app):
     assert page.console_errors == []
 
 
+@pytest.mark.browser
 def test_zoom_inside_dash_resolves(page, running_app):
     page.goto(running_app)
     wait_for_labels(page, ["first", "second"])
@@ -106,6 +108,7 @@ def test_zoom_inside_dash_resolves(page, running_app):
     wait_for_labels(page, ["first"])
 
 
+@pytest.mark.browser
 def test_url_prefix_is_respected(page):
     server = serve(build_app(url_base_pathname="/nested/"))
     try:
@@ -113,3 +116,41 @@ def test_url_prefix_is_respected(page):
         wait_for_labels(page, ["first", "second"])
     finally:
         server.shutdown()
+
+
+def runtime_scripts(app):
+    return [s for s in app.config.external_scripts if "_repelly/" in s]
+
+
+def bare_app(**kwargs):
+    app = Dash(__name__, **kwargs)
+    app.layout = html.Div()
+    return app
+
+
+def test_runtime_url_carries_the_version():
+    app = bare_app()
+    repelly_dash.init_app(app)
+    assert runtime_scripts(app) == [f"/_repelly/runtime.js?v={__version__}"]
+
+
+def test_init_app_twice_has_no_effect():
+    app = bare_app()
+    repelly_dash.init_app(app)
+    repelly_dash.init_app(app)
+    assert len(runtime_scripts(app)) == 1
+    client = app.server.test_client()
+    response = client.get("/_repelly/runtime.js")
+    assert response.status_code == 200
+    assert b"window.repelly.autoAttach()" in response.data
+
+
+def test_apps_can_share_a_flask_server():
+    server = Flask(__name__)
+    first = bare_app(server=server, url_base_pathname="/one/")
+    second = bare_app(server=server, url_base_pathname="/two/")
+    repelly_dash.init_app(first)
+    repelly_dash.init_app(second)
+    client = server.test_client()
+    assert client.get("/one/_repelly/runtime.js").status_code == 200
+    assert client.get("/two/_repelly/runtime.js").status_code == 200

@@ -15,7 +15,20 @@
   'use strict';
 
   var VERSION = '0.3.0';
-  if (root.repelly && root.repelly.version === VERSION) return;
+
+  // Compares dotted release numbers; anything after them is ignored.
+  function compareVersions(a, b) {
+    var pa = String(a).split('.'), pb = String(b).split('.');
+    for (var i = 0; i < 3; i++) {
+      var diff = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+      if (diff) return diff;
+    }
+    return 0;
+  }
+
+  // A page can load the runtime more than once, for example from several
+  // notebook outputs. Never replace the same or a newer version.
+  if (root.repelly && compareVersions(root.repelly.version, VERSION) >= 0) return;
 
   var Solver = root.__repellySolver;
   var NAME_PREFIX = 'repelly-';
@@ -764,14 +777,23 @@
       parts.size === runParts.size && parts.frame === runParts.frame &&
       parts.traces === runParts.traces && parts.config === runParts.config;
     state.parts = parts;
-    if (!unchanged && state.chained < MAX_CHAINED_RUNS) {
+    if (state.pending) {
+      // A run was asked for while this one was being applied, for example
+      // because a web font finished loading.
+      state.pending = false;
+      schedule(gd, state, 'render');
+    } else if (!unchanged && state.chained < MAX_CHAINED_RUNS) {
       state.chained++;
       schedule(gd, state, 'render');
     }
   }
 
   function run(gd, state, exact) {
-    if (state.applying) return state.promise;
+    if (state.retired) return Promise.resolve();
+    if (state.applying) {
+      state.pending = true;
+      return state.promise;
+    }
     if (!root.Plotly) {
       if (!state.warnedNoPlotly) {
         state.warnedNoPlotly = true;
@@ -845,7 +867,7 @@
   }
 
   function evaluate(gd, state) {
-    if (state.applying || !gd._fullLayout) return;
+    if (state.retired || state.applying || !gd._fullLayout) return;
     var cfg = getConfig(gd);
     if (!cfg) {
       if (state.parts || countOurs(gd)) removeLabels(gd, state);
@@ -880,14 +902,31 @@
     schedule(gd, state, trigger);
   }
 
+  // Stops a graph's state, and the event handlers that hold it, from doing
+  // anything more. Older runtimes skip all work while `applying` is set and
+  // clear it after a relayout, so it is pinned to true rather than assigned.
+  function retire(state) {
+    state.retired = true;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    Object.defineProperty(state, 'applying', { get: function () { return true; }, set: function () {} });
+  }
+
   function attach(gd) {
     if (!gd || typeof gd.on !== 'function') return null;
-    if (gd.__repelly && gd.__repelly.emitter === gd._ev) {
-      evaluate(gd, gd.__repelly);
-      return gd.__repelly;
+    var existing = gd.__repelly;
+    if (existing && existing.version === VERSION && existing.emitter === gd._ev) {
+      evaluate(gd, existing);
+      return existing;
     }
+    // A notebook can hold output from an older repelly. Only one runtime may
+    // manage a graph, and the one running here is the newest on the page.
+    if (existing && existing.version !== VERSION) retire(existing);
 
     var state = {
+      version: VERSION,
+      retired: false,
+      pending: false,
       emitter: gd._ev,
       parts: null,
       signature: null,
@@ -951,16 +990,21 @@
   // Watches for Plotly graphs appearing on the page; used by Dash integration,
   // where graphs are created and replaced by callbacks at any time.
   function autoAttach() {
-    if (root.__repellyObserver) return;
+    var current = root.__repellyObserver;
+    if (current && current.repellyVersion === VERSION) return;
+    // An older runtime's observer would keep attaching its own code.
+    if (current) current.disconnect();
     var pending = null;
-    root.__repellyObserver = new MutationObserver(function () {
+    var observer = new MutationObserver(function () {
       if (pending) return;
       pending = setTimeout(function () {
         pending = null;
         scanPage();
       }, 50);
     });
-    root.__repellyObserver.observe(document.documentElement, {
+    observer.repellyVersion = VERSION;
+    root.__repellyObserver = observer;
+    observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
@@ -968,6 +1012,23 @@
     });
     scanPage();
   }
+
+  // Labels are measured on a canvas, which uses a fallback font until a web
+  // font has loaded. Plotly's own text starts such loads, so every graph is
+  // solved again once a batch of fonts finishes loading.
+  function watchFonts() {
+    var fonts = root.document && root.document.fonts;
+    if (!fonts || typeof fonts.addEventListener !== 'function') return;
+    fonts.addEventListener('loadingdone', function () {
+      var plots = document.querySelectorAll('.js-plotly-plot');
+      for (var i = 0; i < plots.length; i++) {
+        var state = plots[i].__repelly;
+        if (state && state.version === VERSION && !state.retired) schedule(plots[i], state, 'render');
+      }
+    });
+  }
+
+  watchFonts();
 
   root.repelly = {
     version: VERSION,
