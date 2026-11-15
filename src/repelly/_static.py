@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -148,14 +149,9 @@ def find_browser(explicit: str | None = None) -> str:
     if override:
         return override
 
-    try:
-        from choreographer.browsers.chromium import Chromium
-    except ImportError:
-        pass
-    else:
-        found = Chromium.find_browser(skip_local=False)
-        if found:
-            return found
+    found = _browser_from_choreographer()
+    if found:
+        return found
 
     for name in ("google-chrome", "chrome", "chromium", "chromium-browser", "msedge"):
         found = shutil.which(name)
@@ -165,6 +161,20 @@ def find_browser(explicit: str | None = None) -> str:
         "Static export needs Chrome or Chromium. Install one, set BROWSER_PATH, or "
         "run `plotly_get_chrome` after installing kaleido."
     )
+
+
+def _browser_from_choreographer() -> str | None:
+    """Return the Chrome that kaleido uses, if choreographer can find one.
+
+    ``Chromium.find_browser`` is not a documented choreographer API, so any
+    failure, including a changed signature, falls back to the PATH search.
+    """
+    try:
+        from choreographer.browsers.chromium import Chromium
+
+        return Chromium.find_browser(skip_local=False) or None
+    except Exception:
+        return None
 
 
 def _chrome_args(browser: str, page: Path, profile: str) -> list[str]:
@@ -197,20 +207,31 @@ def _run_headless(page_html: str, browser_path: str | None) -> dict[str, Any]:
         page = Path(workdir) / "page.html"
         page.write_text(page_html, encoding="utf-8")
         profile = str(Path(workdir) / "profile")
-        completed = subprocess.run(
-            _chrome_args(browser, page, profile),
-            capture_output=True,
-            timeout=_TIMEOUT_SECONDS,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                _chrome_args(browser, page, profile),
+                capture_output=True,
+                timeout=_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"the headless browser at {browser} did not finish placing labels "
+                f"within {_TIMEOUT_SECONDS} seconds"
+            ) from error
 
-    output = completed.stdout.decode("utf-8", errors="replace")
-    match = _RESULT_RE.search(output)
-    if not match:
+    result = _parse_result(completed.stdout.decode("utf-8", errors="replace"))
+    if result is None:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
         raise RuntimeError(f"headless browser returned no label positions. {detail}")
-    return json.loads(_unescape(match.group(1)))
+    return result
 
 
-def _unescape(text: str) -> str:
-    return text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+def _parse_result(dom: str) -> dict[str, Any] | None:
+    """Read the result out of the page Chrome dumped, or None if it is absent.
+
+    The result is the text of an element, which the dump escapes as HTML, for
+    example a non-breaking space in a label as ``&nbsp;``.
+    """
+    match = _RESULT_RE.search(dom)
+    return None if match is None else json.loads(html.unescape(match.group(1)))
