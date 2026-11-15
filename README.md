@@ -204,6 +204,7 @@ fixed, if you need one to pass elsewhere.
 | `avoid_points` | `True` | Keep labels off every marker in the subplot |
 | `drop_unresolved` | `False` | Hide labels that still overlap after solving |
 | `font`, `segment` | Plotly defaults | Styling; `segment` takes `color`, `width`, `arrowhead`, `arrowsize` |
+| `align` | `"center"` | Line up the lines of a multi-line label: `"left"`, `"center"` or `"right"` |
 | `on` | all events | Re-solve on any of `"render"`, `"zoom"`, `"resize"`, `"frame"`; applies to the whole figure, and `None` keeps what an earlier call set; the first render always solves |
 
 ## Diagnostics

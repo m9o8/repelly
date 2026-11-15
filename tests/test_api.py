@@ -74,6 +74,14 @@ def test_events_apply_to_the_whole_figure(base):
     assert config(kept)["on"] == ["render"]
 
 
+def test_align_is_stored_only_when_not_centred(base):
+    assert "align" not in layer(add_text_repel(base, [1], [2], ["a<br>bc"]))
+    left = add_label_repel(base, [1], [2], ["a<br>bc"], align="left")
+    assert layer(left)["align"] == "left"
+    with pytest.raises(ValueError, match="align must be"):
+        add_text_repel(base, [1], [2], ["a"], align="justify")
+
+
 def test_label_repel_takes_the_same_parameters_as_text_repel():
     text = inspect.signature(add_text_repel).parameters
     label = dict(inspect.signature(add_label_repel).parameters)
