@@ -49,7 +49,15 @@ path = "src/repelly/__init__.py"
 packages = ["src/repelly"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/repelly", "tests", "examples", "README.md", "LICENSE", "NOTICE"]
+include = [
+    "src/repelly",
+    "tests",
+    "examples",
+    "benchmarks",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,6 +86,7 @@ nodejs = ">=22"
 test = "pytest"
 test-js = "node --test tests/js/"
 test-all = { depends-on = ["test", "test-js"] }
+bench = "node benchmarks/solver.js"
 
 [tool.pixi.feature.lint.dependencies]
 pre-commit = "*"

@@ -128,6 +128,81 @@
     return count;
   };
 
+  // Grid over label boxes, for asking which labels a box overlaps without
+  // scanning them all. Each label is filed under the cell holding its centre,
+  // read from `xs`/`ys` when queried. Cells are as large as the largest box,
+  // so a query only needs the 3x3 cells around it. `move` re-files a label
+  // whose centre changed; positions are otherwise read live from the arrays.
+  var KEY_OFFSET = 1048576;
+  var KEY_SCALE = 2097152;
+
+  function BoxGrid(xs, ys, hw, hh, ids) {
+    var maxHw = 0, maxHh = 0;
+    for (var a = 0; a < ids.length; a++) {
+      if (hw[ids[a]] > maxHw) maxHw = hw[ids[a]];
+      if (hh[ids[a]] > maxHh) maxHh = hh[ids[a]];
+    }
+    this.xs = xs;
+    this.ys = ys;
+    this.hw = hw;
+    this.hh = hh;
+    this.maxHw = maxHw;
+    this.maxHh = maxHh;
+    this.cellW = Math.max(1, 2 * maxHw);
+    this.cellH = Math.max(1, 2 * maxHh);
+    this.cells = new Map();
+    this.keyOf = new Float64Array(xs.length);
+    this.filed = new Uint8Array(xs.length);
+  }
+
+  BoxGrid.prototype.key = function (cx, cy) {
+    return (cx + KEY_OFFSET) * KEY_SCALE + (cy + KEY_OFFSET);
+  };
+
+  BoxGrid.prototype.add = function (i) {
+    var key = this.key(Math.floor(this.xs[i] / this.cellW), Math.floor(this.ys[i] / this.cellH));
+    var bucket = this.cells.get(key);
+    if (bucket) bucket.push(i);
+    else this.cells.set(key, [i]);
+    this.keyOf[i] = key;
+    this.filed[i] = 1;
+  };
+
+  BoxGrid.prototype.move = function (i) {
+    if (!this.filed[i]) return;
+    var bucket = this.cells.get(this.keyOf[i]);
+    var at = bucket.indexOf(i);
+    bucket[at] = bucket[bucket.length - 1];
+    bucket.pop();
+    this.add(i);
+  };
+
+  // Counts filed labels, other than `skipA` and `skipB`, whose box overlaps a
+  // box of half-size (w, h) centred on (x, y). Stops once the count passes
+  // `limit`, so a limit of 0 answers "any?".
+  BoxGrid.prototype.count = function (x, y, w, h, skipA, skipB, limit) {
+    var xs = this.xs, ys = this.ys, hw = this.hw, hh = this.hh;
+    var cx0 = Math.floor((x - w - this.maxHw) / this.cellW);
+    var cx1 = Math.floor((x + w + this.maxHw) / this.cellW);
+    var cy0 = Math.floor((y - h - this.maxHh) / this.cellH);
+    var cy1 = Math.floor((y + h + this.maxHh) / this.cellH);
+    var found = 0;
+    for (var cx = cx0; cx <= cx1; cx++) {
+      for (var cy = cy0; cy <= cy1; cy++) {
+        var bucket = this.cells.get(this.key(cx, cy));
+        if (!bucket) continue;
+        for (var b = 0; b < bucket.length; b++) {
+          var j = bucket[b];
+          if (j === skipA || j === skipB) continue;
+          if (Math.abs(x - xs[j]) < w + hw[j] && Math.abs(y - ys[j]) < h + hh[j]) {
+            if (++found > limit) return found;
+          }
+        }
+      }
+    }
+    return found;
+  };
+
   function orderByPriority(labels) {
     var order = [];
     for (var i = 0; i < labels.length; i++) order.push(i);
@@ -154,26 +229,17 @@
   // Drops labels that would start on top of more than their allowed number of
   // higher priority labels, mirroring the crowding limit in ggrepel. A label's
   // own `maxOverlaps` takes precedence over the solver-wide default.
-  function cullCrowded(labels, order, defaultLimit) {
+  // `tx`/`ty` are the target centres and `hw`/`hh` the half sizes.
+  function cullCrowded(labels, order, defaultLimit, tx, ty, hw, hh) {
     var kept = new Uint8Array(labels.length);
-    var placed = [];
+    var placed = new BoxGrid(tx, ty, hw, hh, order);
     for (var o = 0; o < order.length; o++) {
       var i = order[o];
-      var a = labels[i];
-      var limit = a.maxOverlaps == null ? defaultLimit : a.maxOverlaps;
-      var count = 0;
-      if (Number.isFinite(limit)) {
-        for (var p = 0; p < placed.length && count <= limit; p++) {
-          var b = labels[placed[p]];
-          if (Math.abs(targetX(a) - targetX(b)) * 2 < a.width + b.width &&
-              Math.abs(targetY(a) - targetY(b)) * 2 < a.height + b.height) {
-            count++;
-          }
-        }
-      }
+      var limit = labels[i].maxOverlaps == null ? defaultLimit : labels[i].maxOverlaps;
+      var count = Number.isFinite(limit) ? placed.count(tx[i], ty[i], hw[i], hh[i], -1, -1, limit) : 0;
       if (count <= limit) {
         kept[i] = 1;
-        placed.push(i);
+        placed.add(i);
       }
     }
     return kept;
@@ -191,13 +257,6 @@
     var random = createRandom(opts.seed == null ? 42 : opts.seed);
     var started = clock();
     var grid = new ObstacleGrid(input.obstacles);
-
-    var order = orderByPriority(labels);
-    var kept = cullCrowded(labels, order, maxOverlaps);
-
-    var active = [];
-    for (var a = 0; a < n; a++) if (kept[a]) active.push(a);
-    var m = active.length;
 
     var px = new Float64Array(n);
     var py = new Float64Array(n);
@@ -222,11 +281,19 @@
       ty[s] = targetY(spec);
       px[s] = tx[s];
       py[s] = ty[s];
-      if (kept[s]) {
-        sumX += tx[s];
-        sumY += ty[s];
-      }
     }
+
+    var order = orderByPriority(labels);
+    var kept = cullCrowded(labels, order, maxOverlaps, tx, ty, hw, hh);
+
+    var active = [];
+    for (var a = 0; a < n; a++) {
+      if (!kept[a]) continue;
+      active.push(a);
+      sumX += tx[a];
+      sumY += ty[a];
+    }
+    var m = active.length;
 
     function clampInto(i, area) {
       var loX = area.x0 + hw[i];
@@ -295,8 +362,8 @@
       return 1;
     }
 
-    // Sweep and prune along x. `sorted` is reused between sweeps, so it is
-    // nearly in order each time and insertion sort stays close to linear.
+    // Sweep and prune. `sorted` is reused between sweeps, so it is nearly in
+    // order each time and insertion sort stays close to linear.
     var sorted = active.slice();
     // Sweep along the axis on which labels are most spread out relative to
     // their size. For text that is usually y: labels are several times wider
@@ -309,6 +376,9 @@
     var sweepY = spanY / atLeastOne(bounds.y1 - bounds.y0) < spanX / atLeastOne(bounds.x1 - bounds.x0);
     var sp = sweepY ? py : px, sh = sweepY ? hh : hw;
     var op = sweepY ? px : py, oh = sweepY ? hw : hh;
+    // Labels start in index order, which insertion sort would take quadratic
+    // time to fix, so the first ordering is a full sort.
+    sorted.sort(function (a, b) { return (sp[a] - sh[a]) - (sp[b] - sh[b]); });
 
     function resolveLabels() {
       var hits = 0;
@@ -388,7 +458,9 @@
     var stalled = 0;
 
     for (var iter = 0; iter < maxIter && m > 0; iter++) {
-      if ((iter & 7) === 7 && outOfTime()) break;
+      // A sweep over thousands of labels takes several milliseconds, so the
+      // clock is read before every one after the first.
+      if (iter > 0 && outOfTime()) break;
       sweeps++;
       prevX.set(px);
       prevY.set(py);
@@ -439,6 +511,11 @@
       if (remaining === 0) break;
     }
 
+    // From here on labels move one at a time, so their boxes are kept in a
+    // grid for the overlap checks. Every later move must call `placed.move`.
+    var placed = new BoxGrid(px, py, hw, hh, active);
+    for (var g = 0; g < m; g++) placed.add(active[g]);
+
     function fitsAt(i, x, y, ignore) {
       var area = labels[i].bounds || bounds;
       if (x - hw[i] < area.x0 || x + hw[i] > area.x1 ||
@@ -449,12 +526,7 @@
     }
 
     function touchesLabel(i, x, y, ignore) {
-      for (var c = 0; c < m; c++) {
-        var j = active[c];
-        if (j === i || j === ignore) continue;
-        if (Math.abs(x - px[j]) < hw[i] + hw[j] && Math.abs(y - py[j]) < hh[i] + hh[j]) return true;
-      }
-      return false;
+      return placed.count(x, y, hw[i], hh[i], i, ignore, 0) > 0;
     }
 
     function touchesPoint(i, x, y) {
@@ -527,6 +599,7 @@
       if (bestCross < Infinity) {
         px[i] = bestX;
         py[i] = bestY;
+        placed.move(i);
         return true;
       }
       return false;
@@ -625,6 +698,8 @@
             py[si] = py[sj];
             px[sj] = keepX;
             py[sj] = keepY;
+            placed.move(si);
+            placed.move(sj);
             swapped = true;
           }
         });
