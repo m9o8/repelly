@@ -9,11 +9,12 @@
 
 from repelly._api import add_label_repel, add_text_repel
 from repelly._figure import RepelFigure, as_repel_figure
-from repelly._static import bake
+from repelly._static import ChromeNotFoundError, bake
 
 __version__ = "0.3.0"
 
 __all__ = [
+    "ChromeNotFoundError",
     "RepelFigure",
     "__version__",
     "add_label_repel",

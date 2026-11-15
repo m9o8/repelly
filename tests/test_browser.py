@@ -395,6 +395,13 @@ def test_bake_fixes_the_size_it_solved_for(chrome_path, monkeypatch):
     assert (baked.layout.width, baked.layout.height) == (900, 350)
 
 
+def test_bake_keeps_special_characters(chrome_path):
+    fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], mode="markers"))
+    names = ["10 kg", "a & <b>b</b>"]
+    baked = bake(add_text_repel(fig, [1, 2], [1, 2], names), width=600, height=400)
+    assert sorted(a.text for a in baked.layout.annotations) == sorted(names)
+
+
 def test_plain_figure_is_returned_by_bake_without_labels(chrome_path):
     fig = go.Figure(go.Scatter(x=[1], y=[1]))
     assert len(bake(fig).layout.annotations) == 0
