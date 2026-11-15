@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const SOLVER_PATH = path.join(__dirname, '..', '..', 'src', 'repelly', 'js', 'solver.js');
-const { solve } = require(SOLVER_PATH);
+const { solve, createRandom } = require(SOLVER_PATH);
 
 const BOUNDS = { x0: 0, y0: 0, x1: 800, y1: 600 };
 const NO_LIMITS = { maxTimeMs: Infinity, maxOverlaps: null, seed: 7 };
@@ -147,6 +147,61 @@ test('solves 500 labels within a reasonable time', () => {
   const labels = cluster(500, 400, 300, 200);
   const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxTimeMs: 200 } });
   assert.ok(result.elapsedMs < 600, `took ${result.elapsedMs}ms`);
+});
+
+function scattered(n, width, height, seed) {
+  const random = createRandom(seed);
+  const labels = [];
+  for (let i = 0; i < n; i++) {
+    labels.push({
+      x: random() * width,
+      y: random() * height,
+      width: 20 + random() * 120,
+      height: 12 + random() * 20,
+      priority: random()
+    });
+  }
+  return labels;
+}
+
+test('stays close to the time budget with 20000 labels', () => {
+  // Steps outside the budget used to compare every label with every other,
+  // which took seconds here.
+  const labels = scattered(20000, 3000, 2000, 5);
+  const bounds = { x0: 0, y0: 0, x1: 3000, y1: 2000 };
+  const result = solve({ labels, bounds, options: { maxTimeMs: 20, maxOverlaps: 10 } });
+  assert.ok(result.elapsedMs < 1000, `took ${result.elapsedMs}ms`);
+});
+
+test('culls crowded labels exactly as a pairwise count would', () => {
+  const labels = scattered(600, 800, 600, 11);
+  const limit = 2;
+  const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxOverlaps: limit } });
+  const order = labels.map((_, i) => i).sort((a, b) => labels[b].priority - labels[a].priority || a - b);
+  const placed = [];
+  for (const i of order) {
+    const hits = placed.filter((j) =>
+      Math.abs(labels[i].x - labels[j].x) * 2 < labels[i].width + labels[j].width &&
+      Math.abs(labels[i].y - labels[j].y) * 2 < labels[i].height + labels[j].height).length;
+    const expected = hits <= limit ? 1 : 0;
+    assert.strictEqual(result.kept[i], expected, `label ${i}`);
+    if (expected) placed.push(i);
+  }
+});
+
+test('reports exactly the labels that overlap another', () => {
+  const labels = scattered(400, 800, 600, 3);
+  const result = solve({ labels, bounds: BOUNDS, options: { ...NO_LIMITS, maxTimeMs: 5 } });
+  for (let i = 0; i < labels.length; i++) {
+    if (!result.kept[i]) continue;
+    let overlaps = 0;
+    for (let j = 0; j < labels.length; j++) {
+      if (j === i || !result.kept[j]) continue;
+      if (Math.abs(result.x[i] - result.x[j]) * 2 < labels[i].width + labels[j].width &&
+          Math.abs(result.y[i] - result.y[j]) * 2 < labels[i].height + labels[j].height) overlaps = 1;
+    }
+    assert.strictEqual(result.overlapsLabel[i], overlaps, `label ${i}`);
+  }
 });
 
 test('maxOverlaps can differ per label', () => {
@@ -291,7 +346,6 @@ test('sparse layouts stop long before the iteration limit', () => {
   // Each label's own point is an obstacle. Some labels end up held against the
   // plot edge, where the bounds undo every push; the solver must notice that
   // nothing moves any more instead of sweeping until maxIter.
-  const { createRandom } = require(SOLVER_PATH);
   for (let seed = 1; seed <= 10; seed++) {
     const random = createRandom(seed);
     const labels = Array.from({ length: 20 }, () =>
