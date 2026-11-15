@@ -451,6 +451,35 @@ def test_initial_time_budget_is_stored_and_validated(base):
 
 
 @pytest.fixture
+def capture_bake(monkeypatch):
+    calls = []
+
+    def fake_bake(fig, *, width=None, height=None):
+        calls.append((width, height))
+        return go.Figure(fig)
+
+    monkeypatch.setattr("repelly._static.bake", fake_bake)
+    monkeypatch.setattr(go.Figure, "to_image", lambda self, *a, **k: b"")
+    monkeypatch.setattr(go.Figure, "write_image", lambda self, *a, **k: None)
+    return calls
+
+
+def test_export_size_given_by_position_reaches_bake(base, capture_bake, tmp_path):
+    fig = add_text_repel(base, [1], [2], ["a"])
+    fig.to_image("png", 800, 600)
+    fig.write_image(tmp_path / "plot.png", "png", 2, 900, 300)
+    fig.to_image(format="png", height=400)
+    assert capture_bake == [(800, 600), (900, 300), (None, 400)]
+
+
+def test_image_renderer_size_reaches_bake(base, capture_bake, monkeypatch):
+    monkeypatch.setattr(pio.renderers["png"], "width", 640)
+    monkeypatch.setattr(pio, "show", lambda *a, **k: None)
+    add_text_repel(base, [1], [2], ["a"]).show(renderer="png", height=320)
+    assert capture_bake == [(640, 320)]
+
+
+@pytest.fixture
 def outside_vscode(monkeypatch):
     for name in [name for name in os.environ if name.startswith("VSCODE_")]:
         monkeypatch.delenv(name)

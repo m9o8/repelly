@@ -21,12 +21,11 @@ from pathlib import Path
 from typing import Any
 
 import plotly.graph_objects as go
+import plotly.io as pio
 
 from repelly._runtime import merge_post_script
 
 META_KEY = "repelly"
-_DEFAULT_WIDTH = 700
-_DEFAULT_HEIGHT = 500
 _TIMEOUT_SECONDS = 120
 _VIRTUAL_TIME_MS = 30000
 
@@ -67,14 +66,17 @@ def bake(
     The labels are solved by the same JavaScript as in interactive output, using
     a headless Chrome so that fonts are measured for real. The result contains
     ordinary annotations and needs no runtime, so any Plotly output path can
-    handle it. Positions are specific to the given size in pixels.
+    handle it. Positions are specific to the given size in pixels, so that size
+    is written into the returned figure's layout.
 
     Parameters
     ----------
     fig:
         A figure with repelling labels.
     width, height:
-        Export size in pixels. Defaults to the figure's own size, or 700x500.
+        Export size in pixels. Defaults to the figure's own size, or else
+        Plotly's image export default, ``plotly.io.defaults.default_width``
+        and ``default_height``.
     browser_path:
         Chrome or Chromium executable. Found automatically when omitted; the
         ``BROWSER_PATH`` environment variable also overrides the search.
@@ -84,12 +86,13 @@ def bake(
     if not isinstance(meta, dict) or META_KEY not in meta:
         return baked
 
-    width = width or baked.layout.width or _DEFAULT_WIDTH
-    height = height or baked.layout.height or _DEFAULT_HEIGHT
+    # The same fallbacks plotly.io.to_image uses, so that an export without an
+    # explicit size draws at the size the labels were solved for.
+    width = width or baked.layout.width or pio.defaults.default_width
+    height = height or baked.layout.height or pio.defaults.default_height
+    baked.update_layout(width=width, height=height)
 
-    sized = go.Figure(baked)
-    sized.update_layout(width=width, height=height)
-    page = sized.to_html(
+    page = baked.to_html(
         full_html=True,
         include_plotlyjs=True,
         animation_opts=None,

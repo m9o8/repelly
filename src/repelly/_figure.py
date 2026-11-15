@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import inspect
 import os
 from typing import Any
 
@@ -51,16 +52,14 @@ class RepelFigure(go.Figure):
         return super().write_html(*args, **kwargs)
 
     def to_image(self, *args: Any, **kwargs: Any) -> bytes:
-        from repelly._static import bake
-
-        baked = bake(self, width=kwargs.get("width"), height=kwargs.get("height"))
-        return baked.to_image(*args, **kwargs)
+        return _bake_for_export(self, pio.to_image, args, kwargs).to_image(
+            *args, **kwargs
+        )
 
     def write_image(self, *args: Any, **kwargs: Any) -> Any:
-        from repelly._static import bake
-
-        baked = bake(self, width=kwargs.get("width"), height=kwargs.get("height"))
-        return baked.write_image(*args, **kwargs)
+        return _bake_for_export(self, pio.write_image, args, kwargs).write_image(
+            *args, **kwargs
+        )
 
     def show(
         self, renderer: str | None = None, validate: bool = True, **kwargs: Any
@@ -69,7 +68,7 @@ class RepelFigure(go.Figure):
         include_plotlyjs = kwargs.pop("include_plotlyjs", "cdn")
 
         if images:
-            baked = _bake_for_display(self, kwargs)
+            baked = _bake_for_display(self, images, kwargs)
             pio.show(baked, renderer="+".join(images), validate=validate)
         if interactive:
             options = dict(
@@ -108,7 +107,7 @@ class RepelFigure(go.Figure):
         bundle: dict[str, Any] = {}
         renderers = pio.renderers
         if images:
-            baked = _bake_for_display(self, kwargs)
+            baked = _bake_for_display(self, images, kwargs)
             bundle.update(
                 renderers._build_mime_bundle(baked.to_dict(), "+".join(images))
             )
@@ -175,10 +174,31 @@ def _plain(fig: go.Figure) -> go.Figure:
     return go.Figure(fig)
 
 
-def _bake_for_display(fig: RepelFigure, options: dict[str, Any]) -> go.Figure:
+def _bake_for_export(
+    fig: RepelFigure, export: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> go.Figure:
+    """Bake at the size ``export`` will draw, given the method's arguments.
+
+    Binding against the plotly.io function picks up a size passed by position,
+    as in ``fig.to_image("png", 800, 600)``.
+    """
     from repelly._static import bake
 
-    return bake(fig, width=options.get("width"), height=options.get("height"))
+    bound = inspect.signature(export).bind_partial(fig, *args, **kwargs).arguments
+    return bake(fig, width=bound.get("width"), height=bound.get("height"))
+
+
+def _bake_for_display(
+    fig: RepelFigure, renderers: list[str], options: dict[str, Any]
+) -> go.Figure:
+    """Bake at the size the image renderers will draw."""
+    from repelly._static import bake
+
+    sizes = {}
+    for side in ("width", "height"):
+        configured = [getattr(pio.renderers[name], side, None) for name in renderers]
+        sizes[side] = options.get(side) or next((s for s in configured if s), None)
+    return bake(fig, **sizes)
 
 
 def _can_use_native_plotly(renderers: list[str]) -> bool:
