@@ -404,13 +404,30 @@ def _axis_ref(plotly_name: str) -> str:
 def _to_list(values: Any, name: str) -> list[Any]:
     if isinstance(values, (str, bytes, Mapping)) or not isinstance(values, Iterable):
         raise TypeError(f"{name} must be a sequence, got {type(values).__name__}")
-    dtype = getattr(values, "dtype", None)
-    if (
-        type(values).__module__.startswith("numpy")
-        and getattr(dtype, "kind", "") == "M"
-    ):
-        values = values.astype("datetime64[us]")
+    if _is_numpy_datetime(values):
+        return list(_numpy_datetime_to_iso(values))
     return list(values.tolist() if hasattr(values, "tolist") else values)
+
+
+def _is_numpy_datetime(value: Any) -> bool:
+    """Return whether ``value`` is a numpy datetime64 scalar or array."""
+    return (
+        type(value).__module__.startswith("numpy")
+        and getattr(getattr(value, "dtype", None), "kind", "") == "M"
+    )
+
+
+def _numpy_datetime_to_iso(value: Any) -> Any:
+    """Convert a numpy datetime64 scalar or array to ISO strings, NaT to None.
+
+    This matches how Plotly serialises numpy datetimes. ``.item()`` is no
+    substitute: it returns an int for nanosecond units, and for any unit once
+    the year leaves 1-9999.
+    """
+    import numpy as np
+
+    text = np.datetime_as_string(value, unit="auto")
+    return np.where(np.isnat(value), None, text).tolist()
 
 
 def _to_native(value: Any) -> Any:
@@ -421,6 +438,8 @@ def _to_native(value: Any) -> Any:
         return None if value != value else value.isoformat()
     if isinstance(value, dt.date):
         return value.isoformat()
+    if _is_numpy_datetime(value):
+        return _numpy_datetime_to_iso(value)
     if hasattr(value, "item") and callable(value.item):
         value = value.item()
         if isinstance(value, (dt.date, dt.datetime)):

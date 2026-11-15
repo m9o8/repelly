@@ -388,6 +388,35 @@ def test_limits_accept_dates_and_open_sides(base):
     assert layer(result)["ylim"] == [0, 5]
 
 
+@pytest.mark.parametrize("unit", ["D", "s", "us", "ns"])
+def test_numpy_datetime_scalars_become_iso_strings(base, unit):
+    day = np.datetime64("2024-01-01", unit)
+    result = add_text_repel(base, [day], [2], ["a"], xlim=(day, None))
+    assert layer(result)["x"][0].startswith("2024-01-01")
+    assert layer(result)["xlim"][0].startswith("2024-01-01")
+
+
+def test_numpy_datetimes_keep_their_precision_and_range(base):
+    values = [
+        np.datetime64("2024-01-01T12:00:00.123456789"),
+        np.datetime64("12000-01-01"),
+    ]
+    result = add_text_repel(base, values, [1, 2], ["a", "b"])
+    assert layer(result)["x"] == ["2024-01-01T12:00:00.123456789", "12000-01-01"]
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [np.datetime64("NaT", "ns"), np.datetime64("2024-01-01")],
+        np.array(["NaT", "2024-01-01"], dtype="datetime64[ns]"),
+    ],
+)
+def test_missing_numpy_datetime_is_dropped(base, values):
+    result = add_text_repel(base, values, [1, 2], ["a", "b"])
+    assert layer(result)["x"] == ["2024-01-01"]
+
+
 def test_trace_mode_callable_nudge():
     fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2], text=["a", "b"]))
     result = add_text_repel(fig, nudge_y=lambda trace: [5, 10], nudge_x=3)
