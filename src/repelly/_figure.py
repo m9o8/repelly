@@ -66,7 +66,10 @@ class RepelFigure(go.Figure):
         self, renderer: str | None = None, validate: bool = True, **kwargs: Any
     ) -> None:
         interactive, inline, images = _split_renderers(renderer)
-        include_plotlyjs = kwargs.pop("include_plotlyjs", "cdn")
+        # Left in kwargs so the HTML renderers that read it (notebook, iframe,
+        # ...) honour it as they do for a plain figure. The default only
+        # applies to repelly's own iframe.
+        include_plotlyjs = kwargs.get("include_plotlyjs", "cdn")
 
         if images:
             baked = _bake_for_display(self, kwargs)

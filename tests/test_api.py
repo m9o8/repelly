@@ -492,3 +492,12 @@ def test_vscode_can_still_embed_on_request(base, monkeypatch):
     shown = capture_display(monkeypatch)
     add_text_repel(base, [1], [2], ["a"]).show(include_plotlyjs=False)
     assert "cdn.plot.ly" not in shown[0]["text/html"]
+
+
+def test_include_plotlyjs_reaches_html_renderers(base, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pio, "show", lambda fig, **kwargs: calls.append(kwargs))
+    add_text_repel(base, [1], [2], ["a"]).show(
+        renderer="notebook", include_plotlyjs=True
+    )
+    assert calls[0]["include_plotlyjs"] is True
