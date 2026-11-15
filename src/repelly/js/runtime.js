@@ -14,7 +14,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
 
   // Compares dotted release numbers; anything after them is ignored.
   function compareVersions(a, b) {
